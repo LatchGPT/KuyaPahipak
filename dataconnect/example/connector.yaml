@@ -1,0 +1,15 @@
+connectorId: example
+generate:
+  javascriptSdk:
+    - outputDir: ..\..\src\dataconnect-generated
+      package: "@dataconnect/generated"
+      packageJsonDir: ..\..
+      react: false
+      angular: false
+      clientCache: {}
+    - outputDir: ..\..\KuyaPahipak-main\src\dataconnect-generated
+      package: "@dataconnect/generated"
+      packageJsonDir: ..\..\KuyaPahipak-main
+      react: true
+      angular: false
+      clientCache: {}

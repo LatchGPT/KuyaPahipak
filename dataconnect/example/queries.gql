@@ -1,0 +1,102 @@
+mutation CreateProduct($name: String!, $category: String!, $brand: String!) @auth(level: USER) {
+  product_insert(data: { name: $name, category: $category, brand: $brand })
+}
+
+mutation UpdateProduct($id: UUID!, $name: String) @auth(level: USER) {
+  product_update(id: $id, data: { name: $name })
+}
+
+mutation DeleteProduct($id: UUID!) @auth(level: USER) {
+  product_delete(id: $id)
+}
+
+query GetProduct($id: UUID!) @auth(level: PUBLIC, insecureReason: "Product catalog is public.") {
+  product(id: $id) { name category brand }
+}
+
+query ListProducts @auth(level: PUBLIC, insecureReason: "Product catalog is public.") {
+  products { name category brand }
+}
+
+mutation CreateProductVariant($productId: UUID!, $flavor: String!, $nicotineStrength: String!, $sku: String!, $currentStock: Int!, $reorderThreshold: Int!) @auth(level: USER) {
+  productVariant_insert(data: { 
+    productId: $productId, 
+    flavor: $flavor, 
+    nicotineStrength: $nicotineStrength, 
+    sku: $sku, 
+    currentStock: $currentStock, 
+    reorderThreshold: $reorderThreshold 
+  })
+}
+
+mutation UpdateProductVariant($id: UUID!, $currentStock: Int) @auth(level: USER) {
+  productVariant_update(id: $id, data: { currentStock: $currentStock })
+}
+
+mutation DeleteProductVariant($id: UUID!) @auth(level: USER) {
+  productVariant_delete(id: $id)
+}
+
+query GetProductVariant($id: UUID!) @auth(level: PUBLIC, insecureReason: "Product catalog is public.") {
+  productVariant(id: $id) { sku flavor nicotineStrength }
+}
+
+query ListProductVariants @auth(level: PUBLIC, insecureReason: "Product catalog is public.") {
+  productVariants { sku flavor nicotineStrength }
+}
+
+mutation CreateSupplier($name: String!, $contactEmail: String!) @auth(level: USER) {
+  supplier_insert(data: { name: $name, contactEmail: $contactEmail })
+}
+
+mutation UpdateSupplier($id: UUID!, $website: String) @auth(level: USER) {
+  supplier_update(id: $id, data: { website: $website })
+}
+
+mutation DeleteSupplier($id: UUID!) @auth(level: USER) {
+  supplier_delete(id: $id)
+}
+
+query GetSupplier($id: UUID!) @auth(level: USER) {
+  supplier(id: $id) { name contactEmail }
+}
+
+query ListSuppliers @auth(level: USER) {
+  suppliers { name contactEmail }
+}
+
+mutation CreateInventoryTransaction($variantId: UUID!, $quantityChanged: Int!, $transactionType: String!) @auth(level: USER) {
+  inventoryTransaction_insert(data: { variantId: $variantId, quantityChanged: $quantityChanged, transactionType: $transactionType })
+}
+
+mutation DeleteInventoryTransaction($id: UUID!) @auth(level: USER) {
+  inventoryTransaction_delete(id: $id)
+}
+
+query GetInventoryTransaction($id: UUID!) @auth(level: USER) {
+  inventoryTransaction(id: $id) { quantityChanged transactionType }
+}
+
+query ListInventoryTransactions @auth(level: USER) {
+  inventoryTransactions { quantityChanged transactionType }
+}
+
+mutation CreatePurchaseOrder($supplierId: UUID!, $status: String!) @auth(level: USER) {
+  purchaseOrder_insert(data: { supplierId: $supplierId, status: $status })
+}
+
+mutation UpdatePurchaseOrder($id: UUID!, $status: String) @auth(level: USER) {
+  purchaseOrder_update(id: $id, data: { status: $status })
+}
+
+mutation DeletePurchaseOrder($id: UUID!) @auth(level: USER) {
+  purchaseOrder_delete(id: $id)
+}
+
+query GetPurchaseOrder($id: UUID!) @auth(level: USER) {
+  purchaseOrder(id: $id) { status totalCost }
+}
+
+query ListPurchaseOrders @auth(level: USER) {
+  purchaseOrders { status totalCost }
+}

@@ -1,0 +1,42 @@
+type Product @table {
+  name: String!
+  category: String!
+  brand: String!
+  description: String
+  imageUrl: String
+  isArchived: Boolean
+}
+
+type ProductVariant @table {
+  product: Product!
+  flavor: String!
+  nicotineStrength: String!
+  sku: String!
+  currentStock: Int!
+  reorderThreshold: Int!
+  costPrice: Float
+  retailPrice: Float
+  supplier: Supplier
+}
+
+type Supplier @table {
+  name: String!
+  contactEmail: String!
+  phoneNumber: String
+  website: String
+}
+
+type InventoryTransaction @table {
+  variant: ProductVariant!
+  quantityChanged: Int!
+  transactionType: String!
+  timestamp: Timestamp
+  notes: String
+}
+
+type PurchaseOrder @table {
+  supplier: Supplier!
+  status: String!
+  expectedDeliveryDate: Date
+  totalCost: Float
+}

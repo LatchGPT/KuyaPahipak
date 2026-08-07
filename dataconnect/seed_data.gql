@@ -1,0 +1,27 @@
+mutation SeedData @transaction {
+  supplier_insertMany(data: [
+    { name: "Coffee Central", contactEmail: "orders@coffeecentral.com", phoneNumber: "555-0101", website: "coffeecentral.com" },
+    { name: "Vape Haven", contactEmail: "sales@vapehaven.com", phoneNumber: "555-0102", website: "vapehaven.com" },
+    { name: "Global Imports", contactEmail: "support@globalimports.com", phoneNumber: "555-0103", website: "globalimports.com" }
+  ])
+  product_insertMany(data: [
+    { name: "Arabica Roast", category: "Coffee", brand: "CafePure", description: "Rich dark roast", isArchived: false },
+    { name: "Classic Vape Kit", category: "Vape", brand: "VapeMaster", description: "Beginner friendly", isArchived: false },
+    { name: "Premium Filters", category: "Accessories", brand: "FilterPro", description: "High quality charcoal filters", isArchived: false }
+  ])
+  productVariant_insertMany(data: [
+    { productId: "00000000-0000-0000-0000-000000000001", flavor: "Dark", nicotineStrength: "N/A", sku: "AR-DRK-001", currentStock: 50, reorderThreshold: 10, costPrice: 5.50, retailPrice: 12.00 },
+    { productId: "00000000-0000-0000-0000-000000000002", flavor: "Menthol", nicotineStrength: "3mg", sku: "VK-MEN-001", currentStock: 20, reorderThreshold: 5, costPrice: 15.00, retailPrice: 35.00 },
+    { productId: "00000000-0000-0000-0000-000000000003", flavor: "Standard", nicotineStrength: "N/A", sku: "PF-STD-001", currentStock: 100, reorderThreshold: 20, costPrice: 1.20, retailPrice: 3.50 }
+  ])
+  purchaseOrder_insertMany(data: [
+    { supplierId: "00000000-0000-0000-0000-000000000001", status: "PENDING", totalCost: 275.00 },
+    { supplierId: "00000000-0000-0000-0000-000000000002", status: "RECEIVED", totalCost: 300.00 },
+    { supplierId: "00000000-0000-0000-0000-000000000003", status: "CANCELLED", totalCost: 120.00 }
+  ])
+  inventoryTransaction_insertMany(data: [
+    { variantId: "00000000-0000-0000-0000-000000000001", quantityChanged: 50, transactionType: "RESTOCK", notes: "Initial inventory" },
+    { variantId: "00000000-0000-0000-0000-000000000002", quantityChanged: -2, transactionType: "SALE", notes: "Web order #101" },
+    { variantId: "00000000-0000-0000-0000-000000000003", quantityChanged: 100, transactionType: "RESTOCK", notes: "Seasonal supply" }
+  ])
+}
