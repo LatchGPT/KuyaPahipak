@@ -26,6 +26,7 @@ import {
   subscribeFlavors,
   subscribeSales,
   updateBrand,
+  updateCustomer,
   updateFlavor,
   uploadImage,
 } from "@/lib/firestore";
@@ -75,6 +76,8 @@ export function AdminDashboard() {
   const [brandForm, setBrandForm] = useState({ name: "", category: "non-transparent" as PodCategory, price: "", imageUrl: "" });
   const [flavorForm, setFlavorForm] = useState({ brandId: "", name: "", stock: "", imageUrl: "", lowStockAlert: "" });
   const [customerName, setCustomerName] = useState("");
+  const [editingCustomerId, setEditingCustomerId] = useState<string | null>(null);
+  const [editingCustomerName, setEditingCustomerName] = useState("");
   const [purchase, setPurchase] = useState({ customerId: "", brandId: "", flavorId: "", quantity: 1 });
   const [redeem, setRedeem] = useState({ customerId: "", flavorId: "" });
 
@@ -359,20 +362,32 @@ export function AdminDashboard() {
           )}
 
           {active === "Inventory" && (
-            <div className="grid gap-3 md:grid-cols-2">
-              {catalogFlavors.map((flavor) => (
-                <Card key={flavor.id}>
-                  <p className="font-semibold">{flavor.name}</p>
-                  <p>Stock: {flavor.stock}</p>
-                  <p className={`text-sm ${flavor.stock <= (flavor.lowStockAlert || settings.lowStockDefault) ? "text-amber-300" : "text-white/70"}`}>
-                    Low stock alert: {flavor.lowStockAlert || settings.lowStockDefault}
-                  </p>
-                  <div className="mt-2 flex gap-2">
-                    <Button variant="outline" onClick={() => updateFlavor(flavor.id, { stock: flavor.stock + 5 })}>Add 5</Button>
-                    <Button variant="outline" onClick={() => updateFlavor(flavor.id, { lowStockAlert: (flavor.lowStockAlert || settings.lowStockDefault) + 1 })}>Raise Alert</Button>
-                  </div>
-                </Card>
-              ))}
+            <div className="grid gap-4 lg:grid-cols-2">
+              {brands.map((brand) => {
+                const brandFlavors = catalogFlavors.filter((flavor) => flavor.brandId === brand.id);
+                if (!brandFlavors.length) return null;
+                return (
+                  <Card key={brand.id} className="p-3">
+                    <h3 className="mb-3 font-bold">{brand.name}</h3>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      {brandFlavors.map((flavor) => (
+                        <div key={flavor.id} className="rounded-xl border border-white/10 p-2 text-sm">
+                          <p className="font-semibold">{flavor.name}</p>
+                          <p>Stock: {flavor.stock}</p>
+                          <p className={`${flavor.stock <= (flavor.lowStockAlert || settings.lowStockDefault) ? "text-amber-300" : "text-white/70"}`}>
+                            Alert: {flavor.lowStockAlert || settings.lowStockDefault}
+                          </p>
+                          <div className="mt-2 flex gap-1">
+                            <Button variant="outline" onClick={() => updateFlavor(flavor.id, { stock: flavor.stock + 5 })}>+5</Button>
+                            <Button variant="outline" onClick={() => updateFlavor(flavor.id, { lowStockAlert: (flavor.lowStockAlert || settings.lowStockDefault) + 1 })}>Alert +1</Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </Card>
+                );
+              })}
+              {!catalogFlavors.length && <p className="text-sm text-white/70">No inventory products yet.</p>}
             </div>
           )}
 
@@ -391,7 +406,27 @@ export function AdminDashboard() {
                   const reward = computeRewardState(customer.totalPurchased, customer.totalRedeemed);
                   return (
                     <Card key={customer.id}>
-                      <p className="font-semibold">{customer.name}</p>
+                      {editingCustomerId === customer.id ? (
+                        <div className="flex flex-wrap gap-2">
+                          <Input value={editingCustomerName} onChange={(event) => setEditingCustomerName(event.target.value)} aria-label="Customer name" />
+                          <Button onClick={async () => {
+                            const name = editingCustomerName.trim();
+                            if (!name) return toast.error("Customer name is required.");
+                            await updateCustomer(customer.id, { name });
+                            setEditingCustomerId(null);
+                            toast.success("Customer name updated");
+                          }}>Save</Button>
+                          <Button variant="outline" onClick={() => setEditingCustomerId(null)}>Cancel</Button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="font-semibold">{customer.name}</p>
+                          <Button variant="outline" onClick={() => {
+                            setEditingCustomerId(customer.id);
+                            setEditingCustomerName(customer.name);
+                          }}>Edit Name</Button>
+                        </div>
+                      )}
                       <p className="text-sm">Purchases: {customer.totalPurchased} | Redeemed: {customer.totalRedeemed}</p>
                       <p className="text-sm">Progress: {reward.progress}/10 | Claimable: {reward.claimable}</p>
                       <Button className="mt-2" variant="danger" onClick={() => deleteCustomer(customer.id)}>Delete</Button>
