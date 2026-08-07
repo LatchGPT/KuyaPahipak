@@ -1,0 +1,29 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: dark;
+}
+
+.light {
+  color-scheme: light;
+}
+
+body {
+  background: radial-gradient(circle at top right, #312e81 0%, #020617 45%, #000 100%);
+}
+
+.light body {
+  background: radial-gradient(circle at top right, #c7d2fe 0%, #f8fafc 45%, #e2e8f0 100%);
+}
+
+.light .text-white {
+  color: #111827;
+}
+
+.light .bg-white\/5 {
+  background-color: rgb(255 255 255 / 0.7);
+}
+
+* {
+  scrollbar-color: #7c3aed transparent;
+}
