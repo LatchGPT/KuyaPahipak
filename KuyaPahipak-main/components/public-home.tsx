@@ -25,6 +25,24 @@ const sorters = {
   alpha: (a: Customer, b: Customer) => a.name.localeCompare(b.name),
 };
 
+const FALLBACK_IMAGE = "/placeholder-brand-1.svg";
+
+function ProductImage({ src, alt, className }: { src: string; alt: string; className: string }) {
+  return (
+    // Cloudinary URLs are user-provided at runtime; a native image keeps the error fallback reliable.
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={src || FALLBACK_IMAGE}
+      alt={alt}
+      className={className}
+      onError={(event) => {
+        if (event.currentTarget.src.endsWith(FALLBACK_IMAGE)) return;
+        event.currentTarget.src = FALLBACK_IMAGE;
+      }}
+    />
+  );
+}
+
 export function PublicHome() {
   const [brands, setBrands] = useState<Brand[]>([]);
   const [flavors, setFlavors] = useState<Flavor[]>([]);
@@ -46,6 +64,8 @@ export function PublicHome() {
     }),
     [brands],
   );
+
+  const brandIsAvailable = (brandId: string) => flavors.some((flavor) => flavor.brandId === brandId && flavor.stock > 0);
 
   const selectedFlavors = useMemo(() => {
     if (!selectedBrand) return [];
@@ -85,22 +105,31 @@ export function PublicHome() {
                 <Badge className="brand-count-badge">{grouped[category].length} Brands</Badge>
               </div>
               <div className="grid gap-4 sm:grid-cols-2">
-                {grouped[category].map((brand) => (
+                {grouped[category].map((brand) => {
+                  const available = brandIsAvailable(brand.id);
+                  return (
                   <motion.button
                     key={brand.id}
-                    whileHover={{ y: -4 }}
-                    className="overflow-hidden rounded-xl border border-white/10 bg-black/40 text-left"
+                    whileHover={available ? { y: -4 } : undefined}
+                    disabled={!available}
+                    aria-disabled={!available}
+                    className={`overflow-hidden rounded-xl border border-white/10 bg-black/40 text-left transition ${available ? "" : "cursor-not-allowed opacity-55 grayscale"}`}
                     onClick={() => {
+                      if (!available) return;
                       setFlavorSearch("");
                       setSelectedBrand(brand);
                     }}
                   >
-                    <img src={brand.imageUrl} alt={brand.name} className="h-56 w-full bg-black/20 object-contain" />
+                    <ProductImage src={brand.imageUrl} alt={brand.name} className="h-56 w-full bg-black/20 object-contain" />
                     <div className="p-3">
-                      <p className="font-semibold">{brand.name}</p>
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="font-semibold">{brand.name}</p>
+                        {!available && <Badge className="bg-white/10 text-white">Unavailable</Badge>}
+                      </div>
                     </div>
                   </motion.button>
-                ))}
+                  );
+                })}
               </div>
             </Card>
           ))}
@@ -177,7 +206,7 @@ export function PublicHome() {
             >
               <div className="grid gap-5 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
                 <div className="flex min-h-80 items-center justify-center rounded-xl bg-black/20 p-3">
-                  <img src={selectedBrand.imageUrl} alt={selectedBrand.name} className="max-h-[32rem] w-full rounded-lg object-contain" />
+                  <ProductImage src={selectedBrand.imageUrl} alt={selectedBrand.name} className="max-h-[32rem] w-full rounded-lg object-contain" />
                 </div>
                 <div className="min-w-0">
                   <div className="mb-4 flex flex-col gap-2">
@@ -189,12 +218,16 @@ export function PublicHome() {
                     />
                   </div>
                   <div className="grid gap-3 sm:grid-cols-2">
-                    {selectedFlavors.map((flavor) => (
-                      <Card key={flavor.id} className="space-y-2">
+                    {selectedFlavors.map((flavor) => {
+                      const available = flavor.stock > 0;
+                      return (
+                      <Card key={flavor.id} aria-disabled={!available} className={`space-y-2 ${available ? "" : "cursor-not-allowed opacity-55 grayscale"}`}>
                         <p className="font-semibold">{flavor.name}</p>
-                        <p className="text-sm text-white/80">{flavor.stock > 0 ? `Stock: ${flavor.stock}` : "Out of Stock"}</p>
+                        <p className="text-sm text-white/80">{available ? `Stock: ${flavor.stock}` : "Out of Stock"}</p>
+                        {!available && <Badge className="w-fit bg-white/10 text-white">Unavailable</Badge>}
                       </Card>
-                    ))}
+                      );
+                    })}
                     {!selectedFlavors.length && <p className="text-sm text-white/70">No flavors found.</p>}
                   </div>
                 </div>

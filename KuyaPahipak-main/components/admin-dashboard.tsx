@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { onAuthStateChanged, signOut } from "firebase/auth";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { Bar, BarChart, CartesianGrid, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Menu, X } from "lucide-react";
 import { auth } from "@/lib/firebase";
 import {
@@ -43,6 +43,17 @@ import { toast } from "sonner";
 
 const sections = ["Dashboard", "Products", "Inventory", "Customers", "Sales", "Analytics", "Reports", "Settings"] as const;
 type Section = (typeof sections)[number];
+const CHART_COLORS = ["#8b5cf6", "#22d3ee", "#f59e0b", "#f43f5e", "#34d399", "#60a5fa", "#e879f9"];
+const BRAND_PLACEHOLDER = "/placeholder-brand-1.svg";
+const FLAVOR_PLACEHOLDER = "/placeholder-flavor-1.svg";
+
+function ProductImage({ src, alt, fallback = BRAND_PLACEHOLDER, className }: { src: string; alt: string; fallback?: string; className: string }) {
+  // Cloudinary URLs are user-provided at runtime; a native image keeps the error fallback reliable.
+  // eslint-disable-next-line @next/next/no-img-element
+  return <img src={src || fallback} alt={alt} className={className} onError={(event) => {
+    if (!event.currentTarget.src.endsWith(fallback)) event.currentTarget.src = fallback;
+  }} />;
+}
 
 function exportWorkbook(name: string, rows: string[][]) {
   const xmlRows = rows
@@ -75,11 +86,17 @@ export function AdminDashboard() {
   const [globalSearch, setGlobalSearch] = useState("");
   const [brandForm, setBrandForm] = useState({ name: "", category: "non-transparent" as PodCategory, price: "", imageUrl: "" });
   const [flavorForm, setFlavorForm] = useState({ brandId: "", name: "", stock: "", imageUrl: "", lowStockAlert: "" });
+  const [editingBrand, setEditingBrand] = useState<Brand | null>(null);
+  const [editingFlavor, setEditingFlavor] = useState<Flavor | null>(null);
+  const [brandUploading, setBrandUploading] = useState(false);
+  const [flavorUploading, setFlavorUploading] = useState(false);
+  const [editingBrandUploading, setEditingBrandUploading] = useState(false);
+  const [editingFlavorUploading, setEditingFlavorUploading] = useState(false);
   const [customerName, setCustomerName] = useState("");
   const [editingCustomerId, setEditingCustomerId] = useState<string | null>(null);
   const [editingCustomerName, setEditingCustomerName] = useState("");
   const [purchase, setPurchase] = useState({ customerId: "", brandId: "", flavorId: "", quantity: 1 });
-  const [redeem, setRedeem] = useState({ customerId: "", flavorId: "" });
+  const [redeem, setRedeem] = useState({ customerId: "", brandId: "", flavorId: "" });
 
   useEffect(() => {
     const unsubAuth = auth
@@ -115,9 +132,19 @@ export function AdminDashboard() {
     [flavors, brands],
   );
 
+  const availableBrands = useMemo(
+    () => brands.filter((brand) => catalogFlavors.some((flavor) => flavor.brandId === brand.id && flavor.stock > 0)),
+    [brands, catalogFlavors],
+  );
+
   const flavorOptions = useMemo(
-    () => catalogFlavors.filter((flavor) => !purchase.brandId || flavor.brandId === purchase.brandId),
+    () => catalogFlavors.filter((flavor) => flavor.brandId === purchase.brandId && flavor.stock > 0),
     [catalogFlavors, purchase.brandId],
+  );
+
+  const redeemFlavorOptions = useMemo(
+    () => catalogFlavors.filter((flavor) => flavor.brandId === redeem.brandId && flavor.stock > 0),
+    [catalogFlavors, redeem.brandId],
   );
 
   const dashboardCards = useMemo(() => {
@@ -292,17 +319,29 @@ export function AdminDashboard() {
                   <option value="non-transparent">Non-Transparent</option>
                   <option value="transparent">Transparent</option>
                 </select>
-                <Input placeholder="Brand image URL" value={brandForm.imageUrl} onChange={(e) => setBrandForm((s) => ({ ...s, imageUrl: e.target.value }))} />
-                <Input type="file" accept="image/*" onChange={async (e) => {
-                  const file = e.target.files?.[0];
-                  if (!file) return;
-                  const imageUrl = await uploadImage(file, "brands");
-                  setBrandForm((s) => ({ ...s, imageUrl }));
-                }} />
-                <Button onClick={async () => {
-                  await createBrand({ ...brandForm, price: Number(brandForm.price || settings.podPrice), imageUrl: brandForm.imageUrl || "/placeholder-brand-1.svg" });
-                  setBrandForm({ name: "", category: "non-transparent", price: "", imageUrl: "" });
-                  toast.success("Brand created");
+                <div className="space-y-2">
+                  <label className="text-sm font-medium" htmlFor="brand-image">Brand image</label>
+                  <Input id="brand-image" type="file" accept="image/*" disabled={brandUploading} onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    setBrandUploading(true);
+                    try {
+                      const imageUrl = await uploadImage(file, "brands");
+                      setBrandForm((s) => ({ ...s, imageUrl }));
+                      toast.success("Brand image uploaded");
+                    } catch (error) {
+                      toast.error(error instanceof Error ? error.message : "Could not upload brand image.");
+                    } finally { setBrandUploading(false); e.target.value = ""; }
+                  }} />
+                  {brandUploading && <p className="text-sm text-white/70">Uploading image…</p>}
+                  {brandForm.imageUrl && <ProductImage src={brandForm.imageUrl} alt="Brand preview" className="h-32 w-full rounded-xl bg-black/20 object-contain" />}
+                </div>
+                <Button disabled={brandUploading || !brandForm.name.trim()} onClick={async () => {
+                  try {
+                    await createBrand({ ...brandForm, name: brandForm.name.trim(), price: Number(brandForm.price || settings.podPrice), imageUrl: brandForm.imageUrl || BRAND_PLACEHOLDER });
+                    setBrandForm({ name: "", category: "non-transparent", price: "", imageUrl: "" });
+                    toast.success("Brand created");
+                  } catch (error) { toast.error(error instanceof Error ? error.message : "Could not create brand."); }
                 }}>Save Brand</Button>
               </Card>
 
@@ -315,42 +354,64 @@ export function AdminDashboard() {
                 <Input placeholder="Flavor name" value={flavorForm.name} onChange={(e) => setFlavorForm((s) => ({ ...s, name: e.target.value }))} />
                 <Input type="number" min={0} placeholder="Starting stock" value={flavorForm.stock} onChange={(e) => setFlavorForm((s) => ({ ...s, stock: e.target.value }))} />
                 <Input type="number" min={1} placeholder="Low-stock alert threshold" value={flavorForm.lowStockAlert} onChange={(e) => setFlavorForm((s) => ({ ...s, lowStockAlert: e.target.value }))} />
-                <Input placeholder="Flavor image URL" value={flavorForm.imageUrl} onChange={(e) => setFlavorForm((s) => ({ ...s, imageUrl: e.target.value }))} />
-                <Input type="file" accept="image/*" onChange={async (e) => {
-                  const file = e.target.files?.[0];
-                  if (!file) return;
-                  const imageUrl = await uploadImage(file, "flavors");
-                  setFlavorForm((s) => ({ ...s, imageUrl }));
-                }} />
-                <Button onClick={async () => {
-                  await createFlavor({ ...flavorForm, stock: Number(flavorForm.stock || 0), lowStockAlert: Number(flavorForm.lowStockAlert || settings.lowStockDefault), imageUrl: flavorForm.imageUrl || "/placeholder-flavor-1.svg" });
-                  setFlavorForm({ brandId: "", name: "", stock: "", imageUrl: "", lowStockAlert: "" });
-                  toast.success("Flavor added");
+                <div className="space-y-2">
+                  <label className="text-sm font-medium" htmlFor="flavor-image">Flavor image</label>
+                  <Input id="flavor-image" type="file" accept="image/*" disabled={flavorUploading} onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    setFlavorUploading(true);
+                    try {
+                      const imageUrl = await uploadImage(file, "flavors");
+                      setFlavorForm((s) => ({ ...s, imageUrl }));
+                      toast.success("Flavor image uploaded");
+                    } catch (error) {
+                      toast.error(error instanceof Error ? error.message : "Could not upload flavor image.");
+                    } finally { setFlavorUploading(false); e.target.value = ""; }
+                  }} />
+                  {flavorUploading && <p className="text-sm text-white/70">Uploading image…</p>}
+                  {flavorForm.imageUrl && <ProductImage src={flavorForm.imageUrl} alt="Flavor preview" fallback={FLAVOR_PLACEHOLDER} className="h-32 w-full rounded-xl bg-black/20 object-contain" />}
+                </div>
+                <Button disabled={flavorUploading || !flavorForm.brandId || !flavorForm.name.trim()} onClick={async () => {
+                  try {
+                    await createFlavor({ ...flavorForm, name: flavorForm.name.trim(), stock: Number(flavorForm.stock || 0), lowStockAlert: Number(flavorForm.lowStockAlert || settings.lowStockDefault), imageUrl: flavorForm.imageUrl || FLAVOR_PLACEHOLDER });
+                    setFlavorForm({ brandId: "", name: "", stock: "", imageUrl: "", lowStockAlert: "" });
+                    toast.success("Flavor added");
+                  } catch (error) { toast.error(error instanceof Error ? error.message : "Could not add flavor."); }
                 }}>Save Flavor</Button>
               </Card>
 
               <Card className="xl:col-span-2">
                 <h3 className="mb-3 text-lg font-bold">Manage Products</h3>
-                <div className="grid gap-2">
+                <div className="grid gap-3">
                   {brands.map((brand) => (
                     <div key={brand.id} className="rounded-xl border border-white/10 p-3">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <p className="font-semibold">{brand.name}</p>
-                        <div className="flex gap-2">
-                          <Button variant="outline" onClick={() => updateBrand(brand.id, { category: brand.category === "transparent" ? "non-transparent" : "transparent" })}>Toggle Category</Button>
-                          <Button variant="danger" onClick={() => deleteBrand(brand.id)}>Delete</Button>
+                      {editingBrand?.id === brand.id ? (
+                        <div className="grid gap-3 md:grid-cols-2">
+                          <Input value={editingBrand.name} aria-label="Brand name" onChange={(e) => setEditingBrand({ ...editingBrand, name: e.target.value })} />
+                          <Input type="number" min={0} step="0.01" value={editingBrand.price ?? ""} aria-label="Brand price" onChange={(e) => setEditingBrand({ ...editingBrand, price: Number(e.target.value) })} />
+                          <select className="h-10 rounded-xl bg-white/5 px-3" value={editingBrand.category} onChange={(e) => setEditingBrand({ ...editingBrand, category: e.target.value as PodCategory })}><option value="non-transparent">Non-Transparent</option><option value="transparent">Transparent</option></select>
+                          <div className="space-y-2">
+                            <Input type="file" accept="image/*" disabled={editingBrandUploading} onChange={async (e) => {
+                              const file = e.target.files?.[0]; if (!file) return; setEditingBrandUploading(true);
+                              try { setEditingBrand({ ...editingBrand, imageUrl: await uploadImage(file, "brands") }); toast.success("Brand image uploaded"); }
+                              catch (error) { toast.error(error instanceof Error ? error.message : "Could not upload brand image."); }
+                              finally { setEditingBrandUploading(false); e.target.value = ""; }
+                            }} />
+                            {editingBrandUploading && <p className="text-sm text-white/70">Uploading image…</p>}
+                          </div>
+                          <ProductImage src={editingBrand.imageUrl} alt="Brand preview" className="h-24 w-full rounded-xl bg-black/20 object-contain" />
+                          <div className="flex gap-2"><Button disabled={editingBrandUploading || !editingBrand.name.trim()} onClick={async () => {
+                            try { await updateBrand(brand.id, { name: editingBrand.name.trim(), price: editingBrand.price || settings.podPrice, category: editingBrand.category, imageUrl: editingBrand.imageUrl || BRAND_PLACEHOLDER }); setEditingBrand(null); toast.success("Brand updated"); }
+                            catch (error) { toast.error(error instanceof Error ? error.message : "Could not update brand."); }
+                          }}>Save</Button><Button variant="outline" onClick={() => setEditingBrand(null)}>Cancel</Button></div>
                         </div>
-                      </div>
-                      <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                      ) : (
+                        <div className="flex flex-wrap items-center justify-between gap-2"><div><p className="font-semibold">{brand.name}</p><p className="text-sm text-white/70">{brand.category} · {toCurrency(brand.price ?? settings.podPrice)}</p></div><div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => setEditingBrand(brand)}>Edit</Button><Button variant="outline" onClick={async () => { try { const category = brand.category === "transparent" ? "non-transparent" : "transparent"; await updateBrand(brand.id, { category }); toast.success(`Moved to ${category}`); } catch (error) { toast.error(error instanceof Error ? error.message : "Could not change category."); } }}>Toggle Category</Button><Button variant="danger" onClick={async () => { try { await deleteBrand(brand.id); toast.success("Brand deleted"); } catch (error) { toast.error(error instanceof Error ? error.message : "Could not delete brand."); } }}>Delete</Button></div></div>
+                      )}
+                      <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                         {flavors.filter((f) => f.brandId === brand.id).map((flavor) => (
                           <div key={flavor.id} className="rounded-lg border border-white/10 p-2 text-sm">
-                            <p>{flavor.name}</p>
-                            <p>Stock: {flavor.stock}</p>
-                            <div className="mt-2 flex gap-2">
-                              <Button variant="outline" onClick={() => updateFlavor(flavor.id, { stock: flavor.stock + 1 })}>+1</Button>
-                              <Button variant="outline" onClick={() => updateFlavor(flavor.id, { stock: Math.max(0, flavor.stock - 1) })}>-1</Button>
-                              <Button variant="danger" onClick={() => deleteFlavor(flavor.id)}>Delete</Button>
-                            </div>
+                            {editingFlavor?.id === flavor.id ? <div className="space-y-2"><Input value={editingFlavor.name} aria-label="Flavor name" onChange={(e) => setEditingFlavor({ ...editingFlavor, name: e.target.value })} /><Input type="number" min={0} value={editingFlavor.stock} aria-label="Flavor stock" onChange={(e) => setEditingFlavor({ ...editingFlavor, stock: Number(e.target.value) })} /><Input type="number" min={1} value={editingFlavor.lowStockAlert} aria-label="Low stock alert" onChange={(e) => setEditingFlavor({ ...editingFlavor, lowStockAlert: Number(e.target.value) })} /><Input type="file" accept="image/*" disabled={editingFlavorUploading} onChange={async (e) => { const file = e.target.files?.[0]; if (!file) return; setEditingFlavorUploading(true); try { setEditingFlavor({ ...editingFlavor, imageUrl: await uploadImage(file, "flavors") }); toast.success("Flavor image uploaded"); } catch (error) { toast.error(error instanceof Error ? error.message : "Could not upload flavor image."); } finally { setEditingFlavorUploading(false); e.target.value = ""; } }} />{editingFlavorUploading && <p className="text-white/70">Uploading image…</p>}<ProductImage src={editingFlavor.imageUrl} alt="Flavor preview" fallback={FLAVOR_PLACEHOLDER} className="h-20 w-full rounded-lg bg-black/20 object-contain" /><div className="flex gap-2"><Button disabled={editingFlavorUploading || !editingFlavor.name.trim()} onClick={async () => { try { await updateFlavor(flavor.id, { name: editingFlavor.name.trim(), stock: editingFlavor.stock, lowStockAlert: editingFlavor.lowStockAlert, imageUrl: editingFlavor.imageUrl || FLAVOR_PLACEHOLDER }); setEditingFlavor(null); toast.success("Flavor updated"); } catch (error) { toast.error(error instanceof Error ? error.message : "Could not update flavor."); } }}>Save</Button><Button variant="outline" onClick={() => setEditingFlavor(null)}>Cancel</Button></div></div> : <><p className="font-semibold">{flavor.name}</p><p>Stock: {flavor.stock}</p><div className="mt-2 flex flex-wrap gap-2"><Button variant="outline" onClick={() => setEditingFlavor(flavor)}>Edit</Button><Button variant="outline" onClick={async () => { try { await updateFlavor(flavor.id, { stock: flavor.stock + 1 }); } catch (error) { toast.error(error instanceof Error ? error.message : "Could not update stock."); } }}>+1</Button><Button variant="outline" onClick={async () => { try { await updateFlavor(flavor.id, { stock: Math.max(0, flavor.stock - 1) }); } catch (error) { toast.error(error instanceof Error ? error.message : "Could not update stock."); } }}>-1</Button><Button variant="danger" onClick={async () => { try { await deleteFlavor(flavor.id); toast.success("Flavor deleted"); } catch (error) { toast.error(error instanceof Error ? error.message : "Could not delete flavor."); } }}>Delete</Button></div></>}
                           </div>
                         ))}
                       </div>
@@ -447,10 +508,10 @@ export function AdminDashboard() {
                 </select>
                 <select className="h-10 rounded-xl bg-white/5 px-3" value={purchase.brandId} onChange={(e) => setPurchase((s) => ({ ...s, brandId: e.target.value, flavorId: "" }))}>
                   <option value="">Select brand</option>
-                  {brands.map((brand) => <option key={brand.id} value={brand.id}>{brand.name}</option>)}
+                  {availableBrands.map((brand) => <option key={brand.id} value={brand.id}>{brand.name}</option>)}
                 </select>
-                <select className="h-10 rounded-xl bg-white/5 px-3" value={purchase.flavorId} onChange={(e) => setPurchase((s) => ({ ...s, flavorId: e.target.value }))}>
-                  <option value="">Select flavor</option>
+                <select className="h-10 rounded-xl bg-white/5 px-3" disabled={!purchase.brandId} value={purchase.flavorId} onChange={(e) => setPurchase((s) => ({ ...s, flavorId: e.target.value }))}>
+                  <option value="">{purchase.brandId ? "Select available flavor" : "Select brand first"}</option>
                   {flavorOptions.map((flavor) => <option key={flavor.id} value={flavor.id}>{flavor.name}</option>)}
                 </select>
                 <Input type="number" min={1} value={purchase.quantity} onChange={(e) => setPurchase((s) => ({ ...s, quantity: Number(e.target.value) }))} />
@@ -458,7 +519,7 @@ export function AdminDashboard() {
                   const customer = customers.find((x) => x.id === purchase.customerId);
                   const brand = brands.find((x) => x.id === purchase.brandId);
                   const flavor = catalogFlavors.find((x) => x.id === purchase.flavorId);
-                  if (!customer || !brand || !flavor) return toast.error("Please complete purchase form.");
+                  if (!customer || !brand || !flavor || flavor.stock <= 0) return toast.error("Select an in-stock flavor to continue.");
                   await recordPurchase({
                     customerId: customer.id,
                     customerName: customer.name,
@@ -475,21 +536,25 @@ export function AdminDashboard() {
 
               <Card className="space-y-3">
                 <h3 className="text-lg font-bold">Redeem Free Pod</h3>
-                <select className="h-10 rounded-xl bg-white/5 px-3" value={redeem.customerId} onChange={(e) => setRedeem((s) => ({ ...s, customerId: e.target.value }))}>
+                <select className="h-10 rounded-xl bg-white/5 px-3" value={redeem.customerId} onChange={(e) => setRedeem({ customerId: e.target.value, brandId: "", flavorId: "" })}>
                   <option value="">Select customer</option>
                   {customers.map((customer) => {
                     const claimable = computeRewardState(customer.totalPurchased, customer.totalRedeemed).claimable;
                     return <option key={customer.id} value={customer.id}>{customer.name} ({claimable} claimable)</option>;
                   })}
                 </select>
-                <select className="h-10 rounded-xl bg-white/5 px-3" value={redeem.flavorId} onChange={(e) => setRedeem((s) => ({ ...s, flavorId: e.target.value }))}>
-                  <option value="">Select flavor</option>
-                  {catalogFlavors.filter((flavor) => flavor.stock > 0).map((flavor) => <option key={flavor.id} value={flavor.id}>{flavor.name}</option>)}
+                <select className="h-10 rounded-xl bg-white/5 px-3" disabled={!redeem.customerId} value={redeem.brandId} onChange={(e) => setRedeem((s) => ({ ...s, brandId: e.target.value, flavorId: "" }))}>
+                  <option value="">{redeem.customerId ? "Select brand" : "Select customer first"}</option>
+                  {availableBrands.map((brand) => <option key={brand.id} value={brand.id}>{brand.name}</option>)}
+                </select>
+                <select className="h-10 rounded-xl bg-white/5 px-3" disabled={!redeem.brandId} value={redeem.flavorId} onChange={(e) => setRedeem((s) => ({ ...s, flavorId: e.target.value }))}>
+                  <option value="">{redeem.brandId ? "Select available flavor" : "Select brand first"}</option>
+                  {redeemFlavorOptions.map((flavor) => <option key={flavor.id} value={flavor.id}>{flavor.name}</option>)}
                 </select>
                 <Button onClick={async () => {
                   const customer = customers.find((x) => x.id === redeem.customerId);
                   const flavor = catalogFlavors.find((x) => x.id === redeem.flavorId);
-                  if (!customer || !flavor) return toast.error("Select customer and flavor first.");
+                  if (!customer || !redeem.brandId || !flavor || flavor.stock <= 0) return toast.error("Select a customer, brand, and in-stock flavor first.");
                   await redeemFreePod({ customerId: customer.id, customerName: customer.name, flavorId: flavor.id, flavorName: flavor.name });
                   toast.success("Free pod redeemed");
                 }}>Redeem</Button>
@@ -535,7 +600,7 @@ export function AdminDashboard() {
                       <XAxis dataKey="name" stroke="#cbd5e1" />
                       <YAxis stroke="#cbd5e1" />
                       <Tooltip />
-                      <Bar dataKey="value" fill="#8b5cf6" />
+                      <Bar dataKey="value">{chartData.byDay.map((entry, index) => <Cell key={entry.name} fill={CHART_COLORS[index % CHART_COLORS.length]} />)}</Bar>
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
@@ -545,7 +610,7 @@ export function AdminDashboard() {
                 <div className="h-64">
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
-                      <Pie data={chartData.byBrand} dataKey="value" nameKey="name" fill="#22d3ee" />
+                      <Pie data={chartData.byBrand} dataKey="value" nameKey="name">{chartData.byBrand.map((entry, index) => <Cell key={entry.name} fill={CHART_COLORS[index % CHART_COLORS.length]} />)}</Pie>
                       <Tooltip />
                     </PieChart>
                   </ResponsiveContainer>
@@ -560,7 +625,7 @@ export function AdminDashboard() {
                       <XAxis dataKey="name" stroke="#cbd5e1" />
                       <YAxis stroke="#cbd5e1" />
                       <Tooltip />
-                      <Bar dataKey="value" fill="#06b6d4" />
+                      <Bar dataKey="value">{chartData.byFlavor.map((entry, index) => <Cell key={entry.name} fill={CHART_COLORS[index % CHART_COLORS.length]} />)}</Bar>
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
@@ -574,7 +639,7 @@ export function AdminDashboard() {
                       <XAxis type="number" stroke="#cbd5e1" />
                       <YAxis type="category" dataKey="name" stroke="#cbd5e1" width={120} />
                       <Tooltip />
-                      <Bar dataKey="value" fill="#818cf8" />
+                      <Bar dataKey="value">{chartData.loyalty.map((entry, index) => <Cell key={entry.name} fill={CHART_COLORS[index % CHART_COLORS.length]} />)}</Bar>
                     </BarChart>
                   </ResponsiveContainer>
                 </div>

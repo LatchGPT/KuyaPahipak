@@ -255,12 +255,41 @@ export async function redeemFreePod(input: {
 }
 
 export async function uploadImage(file: File, folder: "brands" | "flavors") {
-  const { ref, uploadBytes, getDownloadURL } = await import("firebase/storage");
-  const { storage } = await import("@/lib/firebase");
-  if (!storage) throw new Error("Firebase storage is not configured.");
-  const imageRef = ref(storage, `${folder}/${crypto.randomUUID()}-${file.name}`);
-  await uploadBytes(imageRef, file);
-  return getDownloadURL(imageRef);
+  if (!file.type.startsWith("image/")) throw new Error("Please choose an image file.");
+  if (file.size > 5 * 1024 * 1024) throw new Error("Image must be 5 MB or smaller.");
+  const cloudName = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME;
+  const uploadPreset = process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET;
+  if (!cloudName || !uploadPreset) {
+    throw new Error("Cloudinary is not configured. Add NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME and NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET to .env.local.");
+  }
+  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "-");
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("upload_preset", uploadPreset);
+  formData.append("folder", `kuya-pahipak/${folder}`);
+  formData.append("public_id", `${crypto.randomUUID()}-${safeName.replace(/\.[^/.]+$/, "")}`);
+
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 30_000);
+  try {
+    const response = await fetch(`https://api.cloudinary.com/v1_1/${encodeURIComponent(cloudName)}/image/upload`, {
+      method: "POST",
+      body: formData,
+      signal: controller.signal,
+    });
+    const result = (await response.json()) as { secure_url?: string; error?: { message?: string } };
+    if (!response.ok || !result.secure_url) {
+      throw new Error(result.error?.message || "Cloudinary rejected the image upload.");
+    }
+    return result.secure_url;
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error("Image upload timed out. Check your connection and Cloudinary upload preset.");
+    }
+    throw error instanceof Error ? error : new Error("Image upload failed.");
+  } finally {
+    window.clearTimeout(timeout);
+  }
 }
 
 export function categoryLabel(category: PodCategory) {
