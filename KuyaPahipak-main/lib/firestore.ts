@@ -19,7 +19,7 @@ import {
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { assertStockAvailable, computeRewardState } from "@/lib/reward";
-import type { Brand, Claim, Customer, Flavor, PodCategory, Sale, Settings } from "@/lib/types";
+import type { Brand, Claim, Customer, Flavor, PodCategory, PurchaseItem, Sale, Settings } from "@/lib/types";
 
 const noop = () => undefined;
 const ensureDb = () => {
@@ -144,7 +144,87 @@ export async function deleteCustomer(id: string) {
 
 export async function deleteSale(id: string) {
   ensureDb();
-  await deleteDoc(doc(db!, "sales", id));
+  await runTransaction(db!, async (transaction) => {
+    const saleRef = doc(db!, "sales", id);
+    const saleSnap = await transaction.get(saleRef);
+    if (!saleSnap.exists()) throw new Error("Sale record not found.");
+
+    const sale = saleSnap.data() as Sale;
+    const customerRef = doc(db!, "customers", sale.customerId);
+    const flavorRef = doc(db!, "flavors", sale.flavorId);
+    const inventoryRef = doc(db!, "inventory", sale.flavorId);
+    const [customerSnap, flavorSnap, inventorySnap] = await Promise.all([
+      transaction.get(customerRef),
+      transaction.get(flavorRef),
+      transaction.get(inventoryRef),
+    ]);
+
+    if (!customerSnap.exists()) throw new Error("The customer for this sale no longer exists.");
+
+    const customer = customerSnap.data() as Customer;
+    const purchaseItems = customer.items ?? [];
+    const items = purchaseItems
+      .map((item) => item.flavorId === sale.flavorId ? { ...item, quantity: item.quantity - sale.quantity } : item)
+      .filter((item) => item.quantity > 0);
+    const totalPurchased = Math.max(0, Number(customer.totalPurchased ?? 0) - sale.quantity);
+    const reward = computeRewardState(totalPurchased, Number(customer.totalRedeemed ?? 0));
+
+    transaction.update(customerRef, {
+      items,
+      totalPurchased,
+      rewardProgress: reward.progress,
+      claimableRewards: reward.claimable,
+    });
+
+    // A deleted sale is a reversal, so return its pods to stock when the product still exists.
+    if (flavorSnap.exists()) {
+      const flavor = flavorSnap.data() as Flavor;
+      const currentStock = inventorySnap.exists() ? Number(inventorySnap.data().stock ?? flavor.stock) : flavor.stock;
+      const restoredStock = currentStock + sale.quantity;
+      transaction.update(flavorRef, { stock: restoredStock });
+      transaction.set(inventoryRef, {
+        flavorId: sale.flavorId,
+        flavorName: sale.flavorName,
+        stock: restoredStock,
+        updatedAt: serverTimestamp(),
+      });
+    }
+
+    transaction.delete(saleRef);
+  });
+}
+
+export async function updateCustomerPurchaseItems(id: string, items: PurchaseItem[]) {
+  ensureDb();
+  await runTransaction(db!, async (transaction) => {
+    const customerRef = doc(db!, "customers", id);
+    const customerSnap = await transaction.get(customerRef);
+    if (!customerSnap.exists()) throw new Error("Customer not found.");
+
+    const mergedItems = new Map<string, PurchaseItem>();
+    for (const item of items) {
+      const quantity = Number(item.quantity);
+      if (!item.flavorId || !item.flavorName || !Number.isFinite(quantity) || quantity <= 0) continue;
+      const existing = mergedItems.get(item.flavorId);
+      mergedItems.set(item.flavorId, {
+        flavorId: item.flavorId,
+        flavorName: item.flavorName,
+        quantity: (existing?.quantity ?? 0) + Math.floor(quantity),
+      });
+    }
+
+    const normalizedItems = Array.from(mergedItems.values());
+    const totalPurchased = normalizedItems.reduce((total, item) => total + item.quantity, 0);
+    const customer = customerSnap.data() as Customer;
+    const reward = computeRewardState(totalPurchased, Number(customer.totalRedeemed ?? 0));
+
+    transaction.update(customerRef, {
+      items: normalizedItems,
+      totalPurchased,
+      rewardProgress: reward.progress,
+      claimableRewards: reward.claimable,
+    });
+  });
 }
 
 export async function saveSettings(settings: Settings) {

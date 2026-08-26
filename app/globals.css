@@ -12,16 +12,112 @@ body {
   background: radial-gradient(circle at top right, #312e81 0%, #020617 45%, #000 100%);
 }
 
+.logo-title {
+  color: #fff;
+  text-shadow: -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000;
+}
+
+.logo-subtitle {
+  color: #ef4444;
+}
+
+select {
+  color-scheme: dark;
+}
+
+select option {
+  background: #020617;
+  color: #fff;
+}
+
 .light body {
-  background: radial-gradient(circle at top right, #c7d2fe 0%, #f8fafc 45%, #e2e8f0 100%);
+  background: #fff;
+  color: #000;
 }
 
-.light .text-white {
-  color: #111827;
+.light .logo-title {
+  color: #000;
+  text-shadow: -1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff;
 }
 
-.light .bg-white\/5 {
-  background-color: rgb(255 255 255 / 0.7);
+.light .min-h-screen.bg-gradient-to-br {
+  background: #fff !important;
+  color: #000;
+}
+
+.light [class*="text-white"] {
+  color: #000 !important;
+}
+
+.light [class*="border-white"] {
+  border-color: #000 !important;
+}
+
+.light [class*="bg-white"],
+.light [class*="bg-black"],
+.light [class*="bg-slate"] {
+  background-color: #fff !important;
+}
+
+.light input,
+.light select {
+  background-color: #fff !important;
+  color: #000 !important;
+  color-scheme: light;
+}
+
+.light input::placeholder {
+  color: #525252;
+}
+
+.light option {
+  background: #fff;
+  color: #000;
+}
+
+.light button[class*="text-white"] {
+  color: #fff !important;
+}
+
+.light button[aria-label="Toggle theme"] {
+  border-color: #000 !important;
+  background-color: #fff !important;
+  color: #000 !important;
+}
+
+.light [class*="bg-purple"],
+.light [class*="bg-indigo"],
+.light [class*="bg-cyan"] {
+  background-color: #000 !important;
+}
+
+.light [class*="text-purple"],
+.light [class*="text-indigo"],
+.light [class*="text-cyan"],
+.light [class*="text-amber"],
+.light [class*="text-rose"] {
+  color: #000 !important;
+}
+
+.light .recharts-bar-rectangle path,
+.light .recharts-pie-sector path {
+  fill: #000 !important;
+}
+
+.light .recharts-cartesian-grid line,
+.light .recharts-axis-line,
+.light .recharts-tick-line {
+  stroke: #000 !important;
+}
+
+.light .recharts-text tspan {
+  fill: #000 !important;
+}
+
+.light .brand-count-badge {
+  border-color: #000 !important;
+  background-color: #000 !important;
+  color: #fff !important;
 }
 
 * {

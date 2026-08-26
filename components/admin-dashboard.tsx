@@ -4,7 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import { onAuthStateChanged, signOut } from "firebase/auth";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { Bar, BarChart, CartesianGrid, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Menu, X } from "lucide-react";
 import { auth } from "@/lib/firebase";
 import {
   createBrand,
@@ -13,6 +14,7 @@ import {
   deleteBrand,
   deleteCustomer,
   deleteFlavor,
+  deleteSale,
   getSettings,
   isAdmin,
   recordPurchase,
@@ -24,21 +26,35 @@ import {
   subscribeFlavors,
   subscribeSales,
   updateBrand,
+  updateCustomer,
+  updateCustomerPurchaseItems,
   updateFlavor,
   uploadImage,
 } from "@/lib/firestore";
 import { computeRewardState } from "@/lib/reward";
-import type { Brand, Claim, Customer, Flavor, PodCategory, Sale, Settings } from "@/lib/types";
+import { PRODUCT_STATUS_LABELS, productStatusRank, type Brand, type Claim, type Customer, type Flavor, type PodCategory, type ProductStatus, type PurchaseItem, type Sale, type Settings } from "@/lib/types";
 import { toCurrency } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Logo } from "@/components/logo";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { Progress } from "@/components/ui/progress";
 import { toast } from "sonner";
 
 const sections = ["Dashboard", "Products", "Inventory", "Customers", "Sales", "Analytics", "Reports", "Settings"] as const;
 type Section = (typeof sections)[number];
+const CHART_COLORS = ["#8b5cf6", "#22d3ee", "#f59e0b", "#f43f5e", "#34d399", "#60a5fa", "#e879f9"];
+const BRAND_PLACEHOLDER = "/placeholder-brand-1.svg";
+const FLAVOR_PLACEHOLDER = "/placeholder-flavor-1.svg";
+
+function ProductImage({ src, alt, fallback = BRAND_PLACEHOLDER, className }: { src: string; alt: string; fallback?: string; className: string }) {
+  // Cloudinary URLs are user-provided at runtime; a native image keeps the error fallback reliable.
+  // eslint-disable-next-line @next/next/no-img-element
+  return <img src={src || fallback} alt={alt} className={className} onError={(event) => {
+    if (!event.currentTarget.src.endsWith(fallback)) event.currentTarget.src = fallback;
+  }} />;
+}
 
 function exportWorkbook(name: string, rows: string[][]) {
   const xmlRows = rows
@@ -61,6 +77,7 @@ export function AdminDashboard() {
   const router = useRouter();
   const [ready, setReady] = useState(false);
   const [active, setActive] = useState<Section>("Dashboard");
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [brands, setBrands] = useState<Brand[]>([]);
   const [flavors, setFlavors] = useState<Flavor[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -68,11 +85,23 @@ export function AdminDashboard() {
   const [claims, setClaims] = useState<Claim[]>([]);
   const [settings, setSettings] = useState<Settings>({ id: "default", lowStockDefault: 10, podPrice: 350 });
   const [globalSearch, setGlobalSearch] = useState("");
-  const [brandForm, setBrandForm] = useState({ name: "", category: "non-transparent" as PodCategory, imageUrl: "" });
-  const [flavorForm, setFlavorForm] = useState({ brandId: "", name: "", stock: 0, imageUrl: "", lowStockAlert: 10 });
+  const [brandForm, setBrandForm] = useState({ name: "", category: "non-transparent" as PodCategory, status: "available" as ProductStatus, price: "", imageUrl: "" });
+  const [flavorForm, setFlavorForm] = useState({ brandId: "", name: "", stock: "", imageUrl: "", lowStockAlert: "" });
+  const [editingBrand, setEditingBrand] = useState<Brand | null>(null);
+  const [editingFlavor, setEditingFlavor] = useState<Flavor | null>(null);
+  const [brandUploading, setBrandUploading] = useState(false);
+  const [flavorUploading, setFlavorUploading] = useState(false);
+  const [editingBrandUploading, setEditingBrandUploading] = useState(false);
+  const [editingFlavorUploading, setEditingFlavorUploading] = useState(false);
   const [customerName, setCustomerName] = useState("");
+  const [editingCustomerId, setEditingCustomerId] = useState<string | null>(null);
+  const [editingCustomerName, setEditingCustomerName] = useState("");
+  const [expandedCustomerId, setExpandedCustomerId] = useState<string | null>(null);
+  const [editedCustomerItems, setEditedCustomerItems] = useState<PurchaseItem[]>([]);
+  const [customerItemFlavorId, setCustomerItemFlavorId] = useState("");
+  const [customerItemQuantity, setCustomerItemQuantity] = useState(1);
   const [purchase, setPurchase] = useState({ customerId: "", brandId: "", flavorId: "", quantity: 1 });
-  const [redeem, setRedeem] = useState({ customerId: "", flavorId: "" });
+  const [redeem, setRedeem] = useState({ customerId: "", brandId: "", flavorId: "" });
 
   useEffect(() => {
     const unsubAuth = auth
@@ -103,9 +132,29 @@ export function AdminDashboard() {
     };
   }, [router]);
 
+  const catalogFlavors = useMemo(
+    () => flavors.filter((flavor) => brands.some((brand) => brand.id === flavor.brandId)),
+    [flavors, brands],
+  );
+
+  const availableBrands = useMemo(
+    () => brands.filter((brand) => catalogFlavors.some((flavor) => flavor.brandId === brand.id && flavor.stock > 0)),
+    [brands, catalogFlavors],
+  );
+
   const flavorOptions = useMemo(
-    () => flavors.filter((flavor) => !purchase.brandId || flavor.brandId === purchase.brandId),
-    [flavors, purchase.brandId],
+    () => catalogFlavors.filter((flavor) => flavor.brandId === purchase.brandId && flavor.stock > 0),
+    [catalogFlavors, purchase.brandId],
+  );
+
+  const redeemFlavorOptions = useMemo(
+    () => catalogFlavors.filter((flavor) => flavor.brandId === redeem.brandId && flavor.stock > 0),
+    [catalogFlavors, redeem.brandId],
+  );
+
+  const customerItemFlavors = useMemo(
+    () => catalogFlavors.slice().sort((left, right) => left.name.localeCompare(right.name)),
+    [catalogFlavors],
   );
 
   const dashboardCards = useMemo(() => {
@@ -120,9 +169,9 @@ export function AdminDashboard() {
       totalRevenue: sales.reduce((sum, sale) => sum + sale.amount, 0),
       productsSold: sales.reduce((sum, sale) => sum + sale.quantity, 0),
       redeemed: claims.length,
-      lowStock: flavors.filter((flavor) => flavor.stock <= (flavor.lowStockAlert || settings.lowStockDefault)).length,
+      lowStock: catalogFlavors.filter((flavor) => flavor.stock <= (flavor.lowStockAlert || settings.lowStockDefault)).length,
     };
-  }, [sales, claims.length, flavors, settings.lowStockDefault]);
+  }, [sales, claims.length, catalogFlavors, settings.lowStockDefault]);
 
   const chartData = useMemo(() => {
     const byDay = new Map<string, number>();
@@ -161,6 +210,33 @@ export function AdminDashboard() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-black via-slate-950 to-indigo-950 text-white">
+      {mobileMenuOpen && (
+        <div className="fixed inset-0 z-50 lg:hidden">
+          <button className="absolute inset-0 h-full w-full bg-black/70" aria-label="Close navigation menu" onClick={() => setMobileMenuOpen(false)} />
+          <aside className="relative h-full w-72 border-r border-white/10 bg-black p-4 shadow-2xl">
+            <div className="flex items-center justify-between">
+              <Logo />
+              <Button variant="outline" aria-label="Close navigation menu" onClick={() => setMobileMenuOpen(false)}>
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+            <nav className="mt-6 space-y-2">
+              {sections.map((item) => (
+                <button
+                  key={item}
+                  className={`w-full rounded-xl px-3 py-2 text-left text-sm ${active === item ? "bg-white/15" : "hover:bg-white/10"}`}
+                  onClick={() => {
+                    setActive(item);
+                    setMobileMenuOpen(false);
+                  }}
+                >
+                  {item}
+                </button>
+              ))}
+            </nav>
+          </aside>
+        </div>
+      )}
       <div className="flex">
         <aside className="sticky top-0 hidden h-screen w-64 border-r border-white/10 bg-black/50 p-4 backdrop-blur lg:block">
           <Logo />
@@ -180,6 +256,9 @@ export function AdminDashboard() {
         <main className="w-full p-4 md:p-8">
           <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-3 lg:hidden">
+              <Button variant="outline" aria-label="Open navigation menu" aria-expanded={mobileMenuOpen} onClick={() => setMobileMenuOpen(true)}>
+                <Menu className="h-4 w-4" />
+              </Button>
               <Logo />
             </div>
             <div className="flex gap-2">
@@ -201,20 +280,42 @@ export function AdminDashboard() {
           )}
 
           {active === "Dashboard" && (
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-              {[
-                ["Today's Sales", toCurrency(dashboardCards.todaySales)],
-                ["Monthly Sales", toCurrency(dashboardCards.monthlySales)],
-                ["Total Revenue", toCurrency(dashboardCards.totalRevenue)],
-                ["Products Sold", `${dashboardCards.productsSold}`],
-                ["Free Pods Redeemed", `${dashboardCards.redeemed}`],
-                ["Low Stock Products", `${dashboardCards.lowStock}`],
-              ].map(([title, value]) => (
-                <Card key={title}>
-                  <p className="text-sm text-white/70">{title}</p>
-                  <p className="text-2xl font-bold">{value}</p>
-                </Card>
-              ))}
+            <div className="space-y-6">
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                {[
+                  ["Today's Sales", toCurrency(dashboardCards.todaySales)],
+                  ["Monthly Sales", toCurrency(dashboardCards.monthlySales)],
+                  ["Total Revenue", toCurrency(dashboardCards.totalRevenue)],
+                  ["Products Sold", `${dashboardCards.productsSold}`],
+                  ["Free Pods Redeemed", `${dashboardCards.redeemed}`],
+                  ["Low Stock Products", `${dashboardCards.lowStock}`],
+                ].map(([title, value]) => (
+                  <Card key={title}>
+                    <p className="text-sm text-white/70">{title}</p>
+                    <p className="text-2xl font-bold">{value}</p>
+                  </Card>
+                ))}
+              </div>
+              <Card>
+                <div className="mb-4 flex items-center justify-between gap-3">
+                  <h2 className="text-lg font-bold">Live Reward Tracker</h2>
+                  <p className="text-sm text-white/70">Updates as purchases and redemptions are recorded</p>
+                </div>
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                  {customers.map((customer) => {
+                    const reward = computeRewardState(customer.totalPurchased, customer.totalRedeemed);
+                    return (
+                      <div key={customer.id} className="rounded-xl border border-white/10 p-3">
+                        <p className="font-semibold">{customer.name}</p>
+                        <p className="mt-1 text-sm">{reward.progress}/10 pods toward the next reward</p>
+                        <Progress value={(reward.progress / 10) * 100} />
+                        <p className="mt-2 text-sm">Claimable free pods: {reward.claimable}</p>
+                      </div>
+                    );
+                  })}
+                  {!customers.length && <p className="text-sm text-white/70">No customers yet.</p>}
+                </div>
+              </Card>
             </div>
           )}
 
@@ -223,21 +324,37 @@ export function AdminDashboard() {
               <Card className="space-y-3">
                 <h3 className="text-lg font-bold">Create Brand</h3>
                 <Input placeholder="Brand name" value={brandForm.name} onChange={(e) => setBrandForm((s) => ({ ...s, name: e.target.value }))} />
+                <Input type="number" min={0} step="0.01" placeholder="Brand price" value={brandForm.price} onChange={(e) => setBrandForm((s) => ({ ...s, price: e.target.value }))} />
                 <select className="h-10 rounded-xl bg-white/5 px-3" value={brandForm.category} onChange={(e) => setBrandForm((s) => ({ ...s, category: e.target.value as PodCategory }))}>
                   <option value="non-transparent">Non-Transparent</option>
                   <option value="transparent">Transparent</option>
                 </select>
-                <Input placeholder="Brand image URL" value={brandForm.imageUrl} onChange={(e) => setBrandForm((s) => ({ ...s, imageUrl: e.target.value }))} />
-                <Input type="file" accept="image/*" onChange={async (e) => {
-                  const file = e.target.files?.[0];
-                  if (!file) return;
-                  const imageUrl = await uploadImage(file, "brands");
-                  setBrandForm((s) => ({ ...s, imageUrl }));
-                }} />
-                <Button onClick={async () => {
-                  await createBrand({ ...brandForm, imageUrl: brandForm.imageUrl || "/placeholder-brand-1.svg" });
-                  setBrandForm({ name: "", category: "non-transparent", imageUrl: "" });
-                  toast.success("Brand created");
+                <select className="h-10 rounded-xl bg-white/5 px-3" aria-label="Brand availability" value={brandForm.status} onChange={(e) => setBrandForm((s) => ({ ...s, status: e.target.value as ProductStatus }))}>
+                  {Object.entries(PRODUCT_STATUS_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                </select>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium" htmlFor="brand-image">Brand image</label>
+                  <Input id="brand-image" type="file" accept="image/*" disabled={brandUploading} onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    setBrandUploading(true);
+                    try {
+                      const imageUrl = await uploadImage(file, "brands");
+                      setBrandForm((s) => ({ ...s, imageUrl }));
+                      toast.success("Brand image uploaded");
+                    } catch (error) {
+                      toast.error(error instanceof Error ? error.message : "Could not upload brand image.");
+                    } finally { setBrandUploading(false); e.target.value = ""; }
+                  }} />
+                  {brandUploading && <p className="text-sm text-white/70">Uploading image…</p>}
+                  {brandForm.imageUrl && <ProductImage src={brandForm.imageUrl} alt="Brand preview" className="h-32 w-full rounded-xl bg-black/20 object-contain" />}
+                </div>
+                <Button disabled={brandUploading || !brandForm.name.trim()} onClick={async () => {
+                  try {
+                    await createBrand({ ...brandForm, name: brandForm.name.trim(), price: Number(brandForm.price || settings.podPrice), imageUrl: brandForm.imageUrl || BRAND_PLACEHOLDER });
+                    setBrandForm({ name: "", category: "non-transparent", status: "available", price: "", imageUrl: "" });
+                    toast.success("Brand created");
+                  } catch (error) { toast.error(error instanceof Error ? error.message : "Could not create brand."); }
                 }}>Save Brand</Button>
               </Card>
 
@@ -248,44 +365,67 @@ export function AdminDashboard() {
                   {brands.map((brand) => <option key={brand.id} value={brand.id}>{brand.name}</option>)}
                 </select>
                 <Input placeholder="Flavor name" value={flavorForm.name} onChange={(e) => setFlavorForm((s) => ({ ...s, name: e.target.value }))} />
-                <Input type="number" min={0} value={flavorForm.stock} onChange={(e) => setFlavorForm((s) => ({ ...s, stock: Number(e.target.value) }))} />
-                <Input type="number" min={1} value={flavorForm.lowStockAlert} onChange={(e) => setFlavorForm((s) => ({ ...s, lowStockAlert: Number(e.target.value) }))} />
-                <Input placeholder="Flavor image URL" value={flavorForm.imageUrl} onChange={(e) => setFlavorForm((s) => ({ ...s, imageUrl: e.target.value }))} />
-                <Input type="file" accept="image/*" onChange={async (e) => {
-                  const file = e.target.files?.[0];
-                  if (!file) return;
-                  const imageUrl = await uploadImage(file, "flavors");
-                  setFlavorForm((s) => ({ ...s, imageUrl }));
-                }} />
-                <Button onClick={async () => {
-                  await createFlavor({ ...flavorForm, imageUrl: flavorForm.imageUrl || "/placeholder-flavor-1.svg" });
-                  setFlavorForm({ brandId: "", name: "", stock: 0, imageUrl: "", lowStockAlert: settings.lowStockDefault });
-                  toast.success("Flavor added");
+                <Input type="number" min={0} placeholder="Starting stock" value={flavorForm.stock} onChange={(e) => setFlavorForm((s) => ({ ...s, stock: e.target.value }))} />
+                <Input type="number" min={1} placeholder="Low-stock alert threshold" value={flavorForm.lowStockAlert} onChange={(e) => setFlavorForm((s) => ({ ...s, lowStockAlert: e.target.value }))} />
+                <div className="space-y-2">
+                  <label className="text-sm font-medium" htmlFor="flavor-image">Flavor image</label>
+                  <Input id="flavor-image" type="file" accept="image/*" disabled={flavorUploading} onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    setFlavorUploading(true);
+                    try {
+                      const imageUrl = await uploadImage(file, "flavors");
+                      setFlavorForm((s) => ({ ...s, imageUrl }));
+                      toast.success("Flavor image uploaded");
+                    } catch (error) {
+                      toast.error(error instanceof Error ? error.message : "Could not upload flavor image.");
+                    } finally { setFlavorUploading(false); e.target.value = ""; }
+                  }} />
+                  {flavorUploading && <p className="text-sm text-white/70">Uploading image…</p>}
+                  {flavorForm.imageUrl && <ProductImage src={flavorForm.imageUrl} alt="Flavor preview" fallback={FLAVOR_PLACEHOLDER} className="h-32 w-full rounded-xl bg-black/20 object-contain" />}
+                </div>
+                <Button disabled={flavorUploading || !flavorForm.brandId || !flavorForm.name.trim()} onClick={async () => {
+                  try {
+                    await createFlavor({ ...flavorForm, name: flavorForm.name.trim(), stock: Number(flavorForm.stock || 0), lowStockAlert: Number(flavorForm.lowStockAlert || settings.lowStockDefault), imageUrl: flavorForm.imageUrl || FLAVOR_PLACEHOLDER });
+                    setFlavorForm({ brandId: "", name: "", stock: "", imageUrl: "", lowStockAlert: "" });
+                    toast.success("Flavor added");
+                  } catch (error) { toast.error(error instanceof Error ? error.message : "Could not add flavor."); }
                 }}>Save Flavor</Button>
               </Card>
 
               <Card className="xl:col-span-2">
                 <h3 className="mb-3 text-lg font-bold">Manage Products</h3>
-                <div className="grid gap-2">
-                  {brands.map((brand) => (
+                <div className="grid gap-3">
+                  {brands.slice().sort((a, b) => productStatusRank(a.status) - productStatusRank(b.status) || a.name.localeCompare(b.name)).map((brand) => (
                     <div key={brand.id} className="rounded-xl border border-white/10 p-3">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <p className="font-semibold">{brand.name}</p>
-                        <div className="flex gap-2">
-                          <Button variant="outline" onClick={() => updateBrand(brand.id, { category: brand.category === "transparent" ? "non-transparent" : "transparent" })}>Toggle Category</Button>
-                          <Button variant="danger" onClick={() => deleteBrand(brand.id)}>Delete</Button>
+                      {editingBrand?.id === brand.id ? (
+                        <div className="grid gap-3 md:grid-cols-2">
+                          <Input value={editingBrand.name} aria-label="Brand name" onChange={(e) => setEditingBrand({ ...editingBrand, name: e.target.value })} />
+                          <Input type="number" min={0} step="0.01" value={editingBrand.price ?? ""} aria-label="Brand price" onChange={(e) => setEditingBrand({ ...editingBrand, price: Number(e.target.value) })} />
+                          <select className="h-10 rounded-xl bg-white/5 px-3" value={editingBrand.category} onChange={(e) => setEditingBrand({ ...editingBrand, category: e.target.value as PodCategory })}><option value="non-transparent">Non-Transparent</option><option value="transparent">Transparent</option></select>
+                          <select className="h-10 rounded-xl bg-white/5 px-3" aria-label="Brand availability" value={editingBrand.status ?? "available"} onChange={(e) => setEditingBrand({ ...editingBrand, status: e.target.value as ProductStatus })}>{Object.entries(PRODUCT_STATUS_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
+                          <div className="space-y-2">
+                            <Input type="file" accept="image/*" disabled={editingBrandUploading} onChange={async (e) => {
+                              const file = e.target.files?.[0]; if (!file) return; setEditingBrandUploading(true);
+                              try { setEditingBrand({ ...editingBrand, imageUrl: await uploadImage(file, "brands") }); toast.success("Brand image uploaded"); }
+                              catch (error) { toast.error(error instanceof Error ? error.message : "Could not upload brand image."); }
+                              finally { setEditingBrandUploading(false); e.target.value = ""; }
+                            }} />
+                            {editingBrandUploading && <p className="text-sm text-white/70">Uploading image…</p>}
+                          </div>
+                          <ProductImage src={editingBrand.imageUrl} alt="Brand preview" className="h-24 w-full rounded-xl bg-black/20 object-contain" />
+                          <div className="flex gap-2"><Button disabled={editingBrandUploading || !editingBrand.name.trim()} onClick={async () => {
+                            try { await updateBrand(brand.id, { name: editingBrand.name.trim(), price: editingBrand.price || settings.podPrice, category: editingBrand.category, status: editingBrand.status ?? "available", imageUrl: editingBrand.imageUrl || BRAND_PLACEHOLDER }); setEditingBrand(null); toast.success("Brand updated"); }
+                            catch (error) { toast.error(error instanceof Error ? error.message : "Could not update brand."); }
+                          }}>Save</Button><Button variant="outline" onClick={() => setEditingBrand(null)}>Cancel</Button></div>
                         </div>
-                      </div>
-                      <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                      ) : (
+                        <div className="flex flex-wrap items-center justify-between gap-2"><div><p className="font-semibold">{brand.name} <span className={`ml-2 inline-block rounded-full px-2 py-0.5 text-xs ${(brand.status ?? "available") === "available" ? "bg-emerald-500/20 text-emerald-300" : (brand.status ?? "available") === "coming-soon" ? "bg-amber-500/20 text-amber-300" : "bg-red-500/20 text-red-300"}`}>{PRODUCT_STATUS_LABELS[brand.status ?? "available"]}</span></p><p className="text-sm text-white/70">{brand.category} · {toCurrency(brand.price ?? settings.podPrice)}</p></div><div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => setEditingBrand(brand)}>Edit</Button><Button variant="outline" onClick={async () => { try { const category = brand.category === "transparent" ? "non-transparent" : "transparent"; await updateBrand(brand.id, { category }); toast.success(`Moved to ${category}`); } catch (error) { toast.error(error instanceof Error ? error.message : "Could not change category."); } }}>Toggle Category</Button><Button variant="danger" onClick={async () => { try { await deleteBrand(brand.id); toast.success("Brand deleted"); } catch (error) { toast.error(error instanceof Error ? error.message : "Could not delete brand."); } }}>Delete</Button></div></div>
+                      )}
+                      <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                         {flavors.filter((f) => f.brandId === brand.id).map((flavor) => (
                           <div key={flavor.id} className="rounded-lg border border-white/10 p-2 text-sm">
-                            <p>{flavor.name}</p>
-                            <p>Stock: {flavor.stock}</p>
-                            <div className="mt-2 flex gap-2">
-                              <Button variant="outline" onClick={() => updateFlavor(flavor.id, { stock: flavor.stock + 1 })}>+1</Button>
-                              <Button variant="outline" onClick={() => updateFlavor(flavor.id, { stock: Math.max(0, flavor.stock - 1) })}>-1</Button>
-                              <Button variant="danger" onClick={() => deleteFlavor(flavor.id)}>Delete</Button>
-                            </div>
+                            {editingFlavor?.id === flavor.id ? <div className="space-y-2"><Input value={editingFlavor.name} aria-label="Flavor name" onChange={(e) => setEditingFlavor({ ...editingFlavor, name: e.target.value })} /><Input type="number" min={0} value={editingFlavor.stock} aria-label="Flavor stock" onChange={(e) => setEditingFlavor({ ...editingFlavor, stock: Number(e.target.value) })} /><Input type="number" min={1} value={editingFlavor.lowStockAlert} aria-label="Low stock alert" onChange={(e) => setEditingFlavor({ ...editingFlavor, lowStockAlert: Number(e.target.value) })} /><Input type="file" accept="image/*" disabled={editingFlavorUploading} onChange={async (e) => { const file = e.target.files?.[0]; if (!file) return; setEditingFlavorUploading(true); try { setEditingFlavor({ ...editingFlavor, imageUrl: await uploadImage(file, "flavors") }); toast.success("Flavor image uploaded"); } catch (error) { toast.error(error instanceof Error ? error.message : "Could not upload flavor image."); } finally { setEditingFlavorUploading(false); e.target.value = ""; } }} />{editingFlavorUploading && <p className="text-white/70">Uploading image…</p>}<ProductImage src={editingFlavor.imageUrl} alt="Flavor preview" fallback={FLAVOR_PLACEHOLDER} className="h-20 w-full rounded-lg bg-black/20 object-contain" /><div className="flex gap-2"><Button disabled={editingFlavorUploading || !editingFlavor.name.trim()} onClick={async () => { try { await updateFlavor(flavor.id, { name: editingFlavor.name.trim(), stock: editingFlavor.stock, lowStockAlert: editingFlavor.lowStockAlert, imageUrl: editingFlavor.imageUrl || FLAVOR_PLACEHOLDER }); setEditingFlavor(null); toast.success("Flavor updated"); } catch (error) { toast.error(error instanceof Error ? error.message : "Could not update flavor."); } }}>Save</Button><Button variant="outline" onClick={() => setEditingFlavor(null)}>Cancel</Button></div></div> : <><p className="font-semibold">{flavor.name}</p><p>Stock: {flavor.stock}</p><div className="mt-2 flex flex-wrap gap-2"><Button variant="outline" onClick={() => setEditingFlavor(flavor)}>Edit</Button><Button variant="outline" onClick={async () => { try { await updateFlavor(flavor.id, { stock: flavor.stock + 1 }); } catch (error) { toast.error(error instanceof Error ? error.message : "Could not update stock."); } }}>+1</Button><Button variant="outline" onClick={async () => { try { await updateFlavor(flavor.id, { stock: Math.max(0, flavor.stock - 1) }); } catch (error) { toast.error(error instanceof Error ? error.message : "Could not update stock."); } }}>-1</Button><Button variant="danger" onClick={async () => { try { await deleteFlavor(flavor.id); toast.success("Flavor deleted"); } catch (error) { toast.error(error instanceof Error ? error.message : "Could not delete flavor."); } }}>Delete</Button></div></>}
                           </div>
                         ))}
                       </div>
@@ -297,20 +437,32 @@ export function AdminDashboard() {
           )}
 
           {active === "Inventory" && (
-            <div className="grid gap-3 md:grid-cols-2">
-              {flavors.map((flavor) => (
-                <Card key={flavor.id}>
-                  <p className="font-semibold">{flavor.name}</p>
-                  <p>Stock: {flavor.stock}</p>
-                  <p className={`text-sm ${flavor.stock <= (flavor.lowStockAlert || settings.lowStockDefault) ? "text-amber-300" : "text-white/70"}`}>
-                    Low stock alert: {flavor.lowStockAlert || settings.lowStockDefault}
-                  </p>
-                  <div className="mt-2 flex gap-2">
-                    <Button variant="outline" onClick={() => updateFlavor(flavor.id, { stock: flavor.stock + 5 })}>Add 5</Button>
-                    <Button variant="outline" onClick={() => updateFlavor(flavor.id, { lowStockAlert: (flavor.lowStockAlert || settings.lowStockDefault) + 1 })}>Raise Alert</Button>
-                  </div>
-                </Card>
-              ))}
+            <div className="grid gap-4 lg:grid-cols-2">
+              {brands.map((brand) => {
+                const brandFlavors = catalogFlavors.filter((flavor) => flavor.brandId === brand.id);
+                if (!brandFlavors.length) return null;
+                return (
+                  <Card key={brand.id} className="p-3">
+                    <h3 className="mb-3 font-bold">{brand.name}</h3>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      {brandFlavors.map((flavor) => (
+                        <div key={flavor.id} className="rounded-xl border border-white/10 p-2 text-sm">
+                          <p className="font-semibold">{flavor.name}</p>
+                          <p>Stock: {flavor.stock}</p>
+                          <p className={`${flavor.stock <= (flavor.lowStockAlert || settings.lowStockDefault) ? "text-amber-300" : "text-white/70"}`}>
+                            Alert: {flavor.lowStockAlert || settings.lowStockDefault}
+                          </p>
+                          <div className="mt-2 flex gap-1">
+                            <Button variant="outline" onClick={() => updateFlavor(flavor.id, { stock: flavor.stock + 5 })}>+5</Button>
+                            <Button variant="outline" onClick={() => updateFlavor(flavor.id, { lowStockAlert: (flavor.lowStockAlert || settings.lowStockDefault) + 1 })}>Alert +1</Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </Card>
+                );
+              })}
+              {!catalogFlavors.length && <p className="text-sm text-white/70">No inventory products yet.</p>}
             </div>
           )}
 
@@ -329,10 +481,127 @@ export function AdminDashboard() {
                   const reward = computeRewardState(customer.totalPurchased, customer.totalRedeemed);
                   return (
                     <Card key={customer.id}>
-                      <p className="font-semibold">{customer.name}</p>
+                      {editingCustomerId === customer.id ? (
+                        <div className="flex flex-wrap gap-2">
+                          <Input value={editingCustomerName} onChange={(event) => setEditingCustomerName(event.target.value)} aria-label="Customer name" />
+                          <Button onClick={async () => {
+                            const name = editingCustomerName.trim();
+                            if (!name) return toast.error("Customer name is required.");
+                            await updateCustomer(customer.id, { name });
+                            setEditingCustomerId(null);
+                            toast.success("Customer name updated");
+                          }}>Save</Button>
+                          <Button variant="outline" onClick={() => setEditingCustomerId(null)}>Cancel</Button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="font-semibold">{customer.name}</p>
+                          <Button variant="outline" onClick={() => {
+                            setEditingCustomerId(customer.id);
+                            setEditingCustomerName(customer.name);
+                          }}>Edit Name</Button>
+                        </div>
+                      )}
                       <p className="text-sm">Purchases: {customer.totalPurchased} | Redeemed: {customer.totalRedeemed}</p>
                       <p className="text-sm">Progress: {reward.progress}/10 | Claimable: {reward.claimable}</p>
-                      <Button className="mt-2" variant="danger" onClick={() => deleteCustomer(customer.id)}>Delete</Button>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <Button
+                          variant="outline"
+                          onClick={() => {
+                            if (expandedCustomerId === customer.id) {
+                              setExpandedCustomerId(null);
+                              return;
+                            }
+                            setExpandedCustomerId(customer.id);
+                            setEditedCustomerItems((customer.items ?? []).map((item) => ({ ...item })));
+                            setCustomerItemFlavorId("");
+                            setCustomerItemQuantity(1);
+                          }}
+                        >
+                          {expandedCustomerId === customer.id ? "Hide Bought Items" : "Manage Bought Items"}
+                        </Button>
+                        <Button variant="danger" onClick={() => deleteCustomer(customer.id)}>Delete</Button>
+                      </div>
+
+                      {expandedCustomerId === customer.id && (
+                        <div className="mt-4 space-y-3 border-t border-white/10 pt-4">
+                          <div>
+                            <h4 className="font-semibold">Bought Items</h4>
+                            <p className="text-xs text-white/60">Save changes to update this customer&apos;s purchase total and rewards.</p>
+                          </div>
+
+                          <div className="space-y-2">
+                            {editedCustomerItems.map((item) => (
+                              <div key={item.flavorId} className="flex flex-wrap items-center gap-2 rounded-xl border border-white/10 p-2">
+                                <p className="min-w-32 flex-1 text-sm">{item.flavorName}</p>
+                                <Input
+                                  className="w-20"
+                                  type="number"
+                                  min={1}
+                                  aria-label={`${item.flavorName} quantity`}
+                                  value={item.quantity}
+                                  onChange={(event) => setEditedCustomerItems((items) => items.map((currentItem) => (
+                                    currentItem.flavorId === item.flavorId
+                                      ? { ...currentItem, quantity: Math.max(1, Math.floor(Number(event.target.value) || 1)) }
+                                      : currentItem
+                                  )))}
+                                />
+                                <Button variant="danger" onClick={() => setEditedCustomerItems((items) => items.filter((currentItem) => currentItem.flavorId !== item.flavorId))}>Remove</Button>
+                              </div>
+                            ))}
+                            {!editedCustomerItems.length && <p className="text-sm text-white/70">No bought items recorded.</p>}
+                          </div>
+
+                          <div className="flex flex-wrap gap-2">
+                            <select
+                              className="h-10 min-w-44 flex-1 rounded-xl bg-white/5 px-3"
+                              value={customerItemFlavorId}
+                              onChange={(event) => setCustomerItemFlavorId(event.target.value)}
+                            >
+                              <option value="">Select item to add</option>
+                              {customerItemFlavors.map((flavor) => <option key={flavor.id} value={flavor.id}>{flavor.name}</option>)}
+                            </select>
+                            <Input
+                              className="w-20"
+                              type="number"
+                              min={1}
+                              aria-label="New item quantity"
+                              value={customerItemQuantity}
+                              onChange={(event) => setCustomerItemQuantity(Math.max(1, Math.floor(Number(event.target.value) || 1)))}
+                            />
+                            <Button
+                              variant="outline"
+                              onClick={() => {
+                                const flavor = customerItemFlavors.find((item) => item.id === customerItemFlavorId);
+                                if (!flavor) return toast.error("Select an item to add.");
+                                setEditedCustomerItems((items) => {
+                                  const existing = items.find((item) => item.flavorId === flavor.id);
+                                  return existing
+                                    ? items.map((item) => item.flavorId === flavor.id ? { ...item, quantity: item.quantity + customerItemQuantity } : item)
+                                    : [...items, { flavorId: flavor.id, flavorName: flavor.name, quantity: customerItemQuantity }];
+                                });
+                                setCustomerItemFlavorId("");
+                                setCustomerItemQuantity(1);
+                              }}
+                            >
+                              Add Item
+                            </Button>
+                          </div>
+
+                          <Button
+                            onClick={async () => {
+                              try {
+                                await updateCustomerPurchaseItems(customer.id, editedCustomerItems);
+                                toast.success("Bought items updated");
+                              } catch (error) {
+                                toast.error(error instanceof Error ? error.message : "Unable to update bought items.");
+                              }
+                            }}
+                          >
+                            Save Bought Items
+                          </Button>
+                        </div>
+                      )}
                     </Card>
                   );
                 })}
@@ -350,18 +619,18 @@ export function AdminDashboard() {
                 </select>
                 <select className="h-10 rounded-xl bg-white/5 px-3" value={purchase.brandId} onChange={(e) => setPurchase((s) => ({ ...s, brandId: e.target.value, flavorId: "" }))}>
                   <option value="">Select brand</option>
-                  {brands.map((brand) => <option key={brand.id} value={brand.id}>{brand.name}</option>)}
+                  {availableBrands.map((brand) => <option key={brand.id} value={brand.id}>{brand.name}</option>)}
                 </select>
-                <select className="h-10 rounded-xl bg-white/5 px-3" value={purchase.flavorId} onChange={(e) => setPurchase((s) => ({ ...s, flavorId: e.target.value }))}>
-                  <option value="">Select flavor</option>
+                <select className="h-10 rounded-xl bg-white/5 px-3" disabled={!purchase.brandId} value={purchase.flavorId} onChange={(e) => setPurchase((s) => ({ ...s, flavorId: e.target.value }))}>
+                  <option value="">{purchase.brandId ? "Select available flavor" : "Select brand first"}</option>
                   {flavorOptions.map((flavor) => <option key={flavor.id} value={flavor.id}>{flavor.name}</option>)}
                 </select>
                 <Input type="number" min={1} value={purchase.quantity} onChange={(e) => setPurchase((s) => ({ ...s, quantity: Number(e.target.value) }))} />
                 <Button onClick={async () => {
                   const customer = customers.find((x) => x.id === purchase.customerId);
                   const brand = brands.find((x) => x.id === purchase.brandId);
-                  const flavor = flavors.find((x) => x.id === purchase.flavorId);
-                  if (!customer || !brand || !flavor) return toast.error("Please complete purchase form.");
+                  const flavor = catalogFlavors.find((x) => x.id === purchase.flavorId);
+                  if (!customer || !brand || !flavor || flavor.stock <= 0) return toast.error("Select an in-stock flavor to continue.");
                   await recordPurchase({
                     customerId: customer.id,
                     customerName: customer.name,
@@ -370,7 +639,7 @@ export function AdminDashboard() {
                     flavorId: flavor.id,
                     flavorName: flavor.name,
                     quantity: purchase.quantity,
-                    amount: purchase.quantity * settings.podPrice,
+                    amount: purchase.quantity * (brand.price ?? settings.podPrice),
                   });
                   toast.success("Purchase saved");
                 }}>Save Purchase</Button>
@@ -378,24 +647,59 @@ export function AdminDashboard() {
 
               <Card className="space-y-3">
                 <h3 className="text-lg font-bold">Redeem Free Pod</h3>
-                <select className="h-10 rounded-xl bg-white/5 px-3" value={redeem.customerId} onChange={(e) => setRedeem((s) => ({ ...s, customerId: e.target.value }))}>
+                <select className="h-10 rounded-xl bg-white/5 px-3" value={redeem.customerId} onChange={(e) => setRedeem({ customerId: e.target.value, brandId: "", flavorId: "" })}>
                   <option value="">Select customer</option>
                   {customers.map((customer) => {
                     const claimable = computeRewardState(customer.totalPurchased, customer.totalRedeemed).claimable;
                     return <option key={customer.id} value={customer.id}>{customer.name} ({claimable} claimable)</option>;
                   })}
                 </select>
-                <select className="h-10 rounded-xl bg-white/5 px-3" value={redeem.flavorId} onChange={(e) => setRedeem((s) => ({ ...s, flavorId: e.target.value }))}>
-                  <option value="">Select flavor</option>
-                  {flavors.filter((flavor) => flavor.stock > 0).map((flavor) => <option key={flavor.id} value={flavor.id}>{flavor.name}</option>)}
+                <select className="h-10 rounded-xl bg-white/5 px-3" disabled={!redeem.customerId} value={redeem.brandId} onChange={(e) => setRedeem((s) => ({ ...s, brandId: e.target.value, flavorId: "" }))}>
+                  <option value="">{redeem.customerId ? "Select brand" : "Select customer first"}</option>
+                  {availableBrands.map((brand) => <option key={brand.id} value={brand.id}>{brand.name}</option>)}
+                </select>
+                <select className="h-10 rounded-xl bg-white/5 px-3" disabled={!redeem.brandId} value={redeem.flavorId} onChange={(e) => setRedeem((s) => ({ ...s, flavorId: e.target.value }))}>
+                  <option value="">{redeem.brandId ? "Select available flavor" : "Select brand first"}</option>
+                  {redeemFlavorOptions.map((flavor) => <option key={flavor.id} value={flavor.id}>{flavor.name}</option>)}
                 </select>
                 <Button onClick={async () => {
                   const customer = customers.find((x) => x.id === redeem.customerId);
-                  const flavor = flavors.find((x) => x.id === redeem.flavorId);
-                  if (!customer || !flavor) return toast.error("Select customer and flavor first.");
+                  const flavor = catalogFlavors.find((x) => x.id === redeem.flavorId);
+                  if (!customer || !redeem.brandId || !flavor || flavor.stock <= 0) return toast.error("Select a customer, brand, and in-stock flavor first.");
                   await redeemFreePod({ customerId: customer.id, customerName: customer.name, flavorId: flavor.id, flavorName: flavor.name });
                   toast.success("Free pod redeemed");
                 }}>Redeem</Button>
+              </Card>
+
+              <Card className="xl:col-span-2">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <h3 className="text-lg font-bold">Sales History</h3>
+                  <p className="text-sm text-white/70">{sales.length} recorded</p>
+                </div>
+                <div className="space-y-2">
+                  {sales.map((sale) => (
+                    <div key={sale.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/10 p-3 text-sm">
+                      <div>
+                        <p className="font-semibold">{sale.customerName} · {sale.brandName} - {sale.flavorName}</p>
+                        <p className="text-white/70">{sale.quantity} pod(s) · {toCurrency(sale.amount)}</p>
+                      </div>
+                      <Button
+                        variant="danger"
+                        onClick={async () => {
+                          try {
+                            await deleteSale(sale.id);
+                            toast.success("Sale removed and customer purchase total updated");
+                          } catch (error) {
+                            toast.error(error instanceof Error ? error.message : "Unable to remove sale record.");
+                          }
+                        }}
+                      >
+                        Remove
+                      </Button>
+                    </div>
+                  ))}
+                  {!sales.length && <p className="text-sm text-white/70">No sales recorded.</p>}
+                </div>
               </Card>
             </div>
           )}
@@ -411,7 +715,7 @@ export function AdminDashboard() {
                       <XAxis dataKey="name" stroke="#cbd5e1" />
                       <YAxis stroke="#cbd5e1" />
                       <Tooltip />
-                      <Bar dataKey="value" fill="#8b5cf6" />
+                      <Bar dataKey="value">{chartData.byDay.map((entry, index) => <Cell key={entry.name} fill={CHART_COLORS[index % CHART_COLORS.length]} />)}</Bar>
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
@@ -421,7 +725,7 @@ export function AdminDashboard() {
                 <div className="h-64">
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
-                      <Pie data={chartData.byBrand} dataKey="value" nameKey="name" fill="#22d3ee" />
+                      <Pie data={chartData.byBrand} dataKey="value" nameKey="name">{chartData.byBrand.map((entry, index) => <Cell key={entry.name} fill={CHART_COLORS[index % CHART_COLORS.length]} />)}</Pie>
                       <Tooltip />
                     </PieChart>
                   </ResponsiveContainer>
@@ -436,7 +740,7 @@ export function AdminDashboard() {
                       <XAxis dataKey="name" stroke="#cbd5e1" />
                       <YAxis stroke="#cbd5e1" />
                       <Tooltip />
-                      <Bar dataKey="value" fill="#06b6d4" />
+                      <Bar dataKey="value">{chartData.byFlavor.map((entry, index) => <Cell key={entry.name} fill={CHART_COLORS[index % CHART_COLORS.length]} />)}</Bar>
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
@@ -450,7 +754,7 @@ export function AdminDashboard() {
                       <XAxis type="number" stroke="#cbd5e1" />
                       <YAxis type="category" dataKey="name" stroke="#cbd5e1" width={120} />
                       <Tooltip />
-                      <Bar dataKey="value" fill="#818cf8" />
+                      <Bar dataKey="value">{chartData.loyalty.map((entry, index) => <Cell key={entry.name} fill={CHART_COLORS[index % CHART_COLORS.length]} />)}</Bar>
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
@@ -491,8 +795,14 @@ export function AdminDashboard() {
           {active === "Settings" && (
             <Card className="space-y-3">
               <h3 className="text-lg font-bold">Store Settings</h3>
-              <Input type="number" min={1} value={settings.podPrice} onChange={(e) => setSettings((s) => ({ ...s, podPrice: Number(e.target.value) }))} />
-              <Input type="number" min={1} value={settings.lowStockDefault} onChange={(e) => setSettings((s) => ({ ...s, lowStockDefault: Number(e.target.value) }))} />
+              <div className="space-y-1">
+                <label className="text-sm font-medium" htmlFor="pod-price">Pod price</label>
+                <Input id="pod-price" type="number" min={1} placeholder="Price charged for one pod" value={settings.podPrice} onChange={(e) => setSettings((s) => ({ ...s, podPrice: Number(e.target.value) }))} />
+              </div>
+              <div className="space-y-1">
+                <label className="text-sm font-medium" htmlFor="low-stock-default">Default low-stock alert</label>
+                <Input id="low-stock-default" type="number" min={1} placeholder="Alert when stock reaches this amount" value={settings.lowStockDefault} onChange={(e) => setSettings((s) => ({ ...s, lowStockDefault: Number(e.target.value) }))} />
+              </div>
               <Button onClick={async () => {
                 await saveSettings(settings);
                 toast.success("Settings saved");

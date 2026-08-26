@@ -27,11 +27,12 @@ import {
   subscribeSales,
   updateBrand,
   updateCustomer,
+  updateCustomerPurchaseItems,
   updateFlavor,
   uploadImage,
 } from "@/lib/firestore";
 import { computeRewardState } from "@/lib/reward";
-import type { Brand, Claim, Customer, Flavor, PodCategory, Sale, Settings } from "@/lib/types";
+import { PRODUCT_STATUS_LABELS, productStatusRank, type Brand, type Claim, type Customer, type Flavor, type PodCategory, type ProductStatus, type PurchaseItem, type Sale, type Settings } from "@/lib/types";
 import { toCurrency } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -84,7 +85,7 @@ export function AdminDashboard() {
   const [claims, setClaims] = useState<Claim[]>([]);
   const [settings, setSettings] = useState<Settings>({ id: "default", lowStockDefault: 10, podPrice: 350 });
   const [globalSearch, setGlobalSearch] = useState("");
-  const [brandForm, setBrandForm] = useState({ name: "", category: "non-transparent" as PodCategory, price: "", imageUrl: "" });
+  const [brandForm, setBrandForm] = useState({ name: "", category: "non-transparent" as PodCategory, status: "available" as ProductStatus, price: "", imageUrl: "" });
   const [flavorForm, setFlavorForm] = useState({ brandId: "", name: "", stock: "", imageUrl: "", lowStockAlert: "" });
   const [editingBrand, setEditingBrand] = useState<Brand | null>(null);
   const [editingFlavor, setEditingFlavor] = useState<Flavor | null>(null);
@@ -95,6 +96,10 @@ export function AdminDashboard() {
   const [customerName, setCustomerName] = useState("");
   const [editingCustomerId, setEditingCustomerId] = useState<string | null>(null);
   const [editingCustomerName, setEditingCustomerName] = useState("");
+  const [expandedCustomerId, setExpandedCustomerId] = useState<string | null>(null);
+  const [editedCustomerItems, setEditedCustomerItems] = useState<PurchaseItem[]>([]);
+  const [customerItemFlavorId, setCustomerItemFlavorId] = useState("");
+  const [customerItemQuantity, setCustomerItemQuantity] = useState(1);
   const [purchase, setPurchase] = useState({ customerId: "", brandId: "", flavorId: "", quantity: 1 });
   const [redeem, setRedeem] = useState({ customerId: "", brandId: "", flavorId: "" });
 
@@ -145,6 +150,11 @@ export function AdminDashboard() {
   const redeemFlavorOptions = useMemo(
     () => catalogFlavors.filter((flavor) => flavor.brandId === redeem.brandId && flavor.stock > 0),
     [catalogFlavors, redeem.brandId],
+  );
+
+  const customerItemFlavors = useMemo(
+    () => catalogFlavors.slice().sort((left, right) => left.name.localeCompare(right.name)),
+    [catalogFlavors],
   );
 
   const dashboardCards = useMemo(() => {
@@ -319,6 +329,9 @@ export function AdminDashboard() {
                   <option value="non-transparent">Non-Transparent</option>
                   <option value="transparent">Transparent</option>
                 </select>
+                <select className="h-10 rounded-xl bg-white/5 px-3" aria-label="Brand availability" value={brandForm.status} onChange={(e) => setBrandForm((s) => ({ ...s, status: e.target.value as ProductStatus }))}>
+                  {Object.entries(PRODUCT_STATUS_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                </select>
                 <div className="space-y-2">
                   <label className="text-sm font-medium" htmlFor="brand-image">Brand image</label>
                   <Input id="brand-image" type="file" accept="image/*" disabled={brandUploading} onChange={async (e) => {
@@ -339,7 +352,7 @@ export function AdminDashboard() {
                 <Button disabled={brandUploading || !brandForm.name.trim()} onClick={async () => {
                   try {
                     await createBrand({ ...brandForm, name: brandForm.name.trim(), price: Number(brandForm.price || settings.podPrice), imageUrl: brandForm.imageUrl || BRAND_PLACEHOLDER });
-                    setBrandForm({ name: "", category: "non-transparent", price: "", imageUrl: "" });
+                    setBrandForm({ name: "", category: "non-transparent", status: "available", price: "", imageUrl: "" });
                     toast.success("Brand created");
                   } catch (error) { toast.error(error instanceof Error ? error.message : "Could not create brand."); }
                 }}>Save Brand</Button>
@@ -383,13 +396,14 @@ export function AdminDashboard() {
               <Card className="xl:col-span-2">
                 <h3 className="mb-3 text-lg font-bold">Manage Products</h3>
                 <div className="grid gap-3">
-                  {brands.map((brand) => (
+                  {brands.slice().sort((a, b) => productStatusRank(a.status) - productStatusRank(b.status) || a.name.localeCompare(b.name)).map((brand) => (
                     <div key={brand.id} className="rounded-xl border border-white/10 p-3">
                       {editingBrand?.id === brand.id ? (
                         <div className="grid gap-3 md:grid-cols-2">
                           <Input value={editingBrand.name} aria-label="Brand name" onChange={(e) => setEditingBrand({ ...editingBrand, name: e.target.value })} />
                           <Input type="number" min={0} step="0.01" value={editingBrand.price ?? ""} aria-label="Brand price" onChange={(e) => setEditingBrand({ ...editingBrand, price: Number(e.target.value) })} />
                           <select className="h-10 rounded-xl bg-white/5 px-3" value={editingBrand.category} onChange={(e) => setEditingBrand({ ...editingBrand, category: e.target.value as PodCategory })}><option value="non-transparent">Non-Transparent</option><option value="transparent">Transparent</option></select>
+                          <select className="h-10 rounded-xl bg-white/5 px-3" aria-label="Brand availability" value={editingBrand.status ?? "available"} onChange={(e) => setEditingBrand({ ...editingBrand, status: e.target.value as ProductStatus })}>{Object.entries(PRODUCT_STATUS_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
                           <div className="space-y-2">
                             <Input type="file" accept="image/*" disabled={editingBrandUploading} onChange={async (e) => {
                               const file = e.target.files?.[0]; if (!file) return; setEditingBrandUploading(true);
@@ -401,12 +415,12 @@ export function AdminDashboard() {
                           </div>
                           <ProductImage src={editingBrand.imageUrl} alt="Brand preview" className="h-24 w-full rounded-xl bg-black/20 object-contain" />
                           <div className="flex gap-2"><Button disabled={editingBrandUploading || !editingBrand.name.trim()} onClick={async () => {
-                            try { await updateBrand(brand.id, { name: editingBrand.name.trim(), price: editingBrand.price || settings.podPrice, category: editingBrand.category, imageUrl: editingBrand.imageUrl || BRAND_PLACEHOLDER }); setEditingBrand(null); toast.success("Brand updated"); }
+                            try { await updateBrand(brand.id, { name: editingBrand.name.trim(), price: editingBrand.price || settings.podPrice, category: editingBrand.category, status: editingBrand.status ?? "available", imageUrl: editingBrand.imageUrl || BRAND_PLACEHOLDER }); setEditingBrand(null); toast.success("Brand updated"); }
                             catch (error) { toast.error(error instanceof Error ? error.message : "Could not update brand."); }
                           }}>Save</Button><Button variant="outline" onClick={() => setEditingBrand(null)}>Cancel</Button></div>
                         </div>
                       ) : (
-                        <div className="flex flex-wrap items-center justify-between gap-2"><div><p className="font-semibold">{brand.name}</p><p className="text-sm text-white/70">{brand.category} · {toCurrency(brand.price ?? settings.podPrice)}</p></div><div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => setEditingBrand(brand)}>Edit</Button><Button variant="outline" onClick={async () => { try { const category = brand.category === "transparent" ? "non-transparent" : "transparent"; await updateBrand(brand.id, { category }); toast.success(`Moved to ${category}`); } catch (error) { toast.error(error instanceof Error ? error.message : "Could not change category."); } }}>Toggle Category</Button><Button variant="danger" onClick={async () => { try { await deleteBrand(brand.id); toast.success("Brand deleted"); } catch (error) { toast.error(error instanceof Error ? error.message : "Could not delete brand."); } }}>Delete</Button></div></div>
+                        <div className="flex flex-wrap items-center justify-between gap-2"><div><p className="font-semibold">{brand.name} <span className={`ml-2 inline-block rounded-full px-2 py-0.5 text-xs ${(brand.status ?? "available") === "available" ? "bg-emerald-500/20 text-emerald-300" : (brand.status ?? "available") === "coming-soon" ? "bg-amber-500/20 text-amber-300" : "bg-red-500/20 text-red-300"}`}>{PRODUCT_STATUS_LABELS[brand.status ?? "available"]}</span></p><p className="text-sm text-white/70">{brand.category} · {toCurrency(brand.price ?? settings.podPrice)}</p></div><div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => setEditingBrand(brand)}>Edit</Button><Button variant="outline" onClick={async () => { try { const category = brand.category === "transparent" ? "non-transparent" : "transparent"; await updateBrand(brand.id, { category }); toast.success(`Moved to ${category}`); } catch (error) { toast.error(error instanceof Error ? error.message : "Could not change category."); } }}>Toggle Category</Button><Button variant="danger" onClick={async () => { try { await deleteBrand(brand.id); toast.success("Brand deleted"); } catch (error) { toast.error(error instanceof Error ? error.message : "Could not delete brand."); } }}>Delete</Button></div></div>
                       )}
                       <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                         {flavors.filter((f) => f.brandId === brand.id).map((flavor) => (
@@ -490,7 +504,104 @@ export function AdminDashboard() {
                       )}
                       <p className="text-sm">Purchases: {customer.totalPurchased} | Redeemed: {customer.totalRedeemed}</p>
                       <p className="text-sm">Progress: {reward.progress}/10 | Claimable: {reward.claimable}</p>
-                      <Button className="mt-2" variant="danger" onClick={() => deleteCustomer(customer.id)}>Delete</Button>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <Button
+                          variant="outline"
+                          onClick={() => {
+                            if (expandedCustomerId === customer.id) {
+                              setExpandedCustomerId(null);
+                              return;
+                            }
+                            setExpandedCustomerId(customer.id);
+                            setEditedCustomerItems((customer.items ?? []).map((item) => ({ ...item })));
+                            setCustomerItemFlavorId("");
+                            setCustomerItemQuantity(1);
+                          }}
+                        >
+                          {expandedCustomerId === customer.id ? "Hide Bought Items" : "Manage Bought Items"}
+                        </Button>
+                        <Button variant="danger" onClick={() => deleteCustomer(customer.id)}>Delete</Button>
+                      </div>
+
+                      {expandedCustomerId === customer.id && (
+                        <div className="mt-4 space-y-3 border-t border-white/10 pt-4">
+                          <div>
+                            <h4 className="font-semibold">Bought Items</h4>
+                            <p className="text-xs text-white/60">Save changes to update this customer&apos;s purchase total and rewards.</p>
+                          </div>
+
+                          <div className="space-y-2">
+                            {editedCustomerItems.map((item) => (
+                              <div key={item.flavorId} className="flex flex-wrap items-center gap-2 rounded-xl border border-white/10 p-2">
+                                <p className="min-w-32 flex-1 text-sm">{item.flavorName}</p>
+                                <Input
+                                  className="w-20"
+                                  type="number"
+                                  min={1}
+                                  aria-label={`${item.flavorName} quantity`}
+                                  value={item.quantity}
+                                  onChange={(event) => setEditedCustomerItems((items) => items.map((currentItem) => (
+                                    currentItem.flavorId === item.flavorId
+                                      ? { ...currentItem, quantity: Math.max(1, Math.floor(Number(event.target.value) || 1)) }
+                                      : currentItem
+                                  )))}
+                                />
+                                <Button variant="danger" onClick={() => setEditedCustomerItems((items) => items.filter((currentItem) => currentItem.flavorId !== item.flavorId))}>Remove</Button>
+                              </div>
+                            ))}
+                            {!editedCustomerItems.length && <p className="text-sm text-white/70">No bought items recorded.</p>}
+                          </div>
+
+                          <div className="flex flex-wrap gap-2">
+                            <select
+                              className="h-10 min-w-44 flex-1 rounded-xl bg-white/5 px-3"
+                              value={customerItemFlavorId}
+                              onChange={(event) => setCustomerItemFlavorId(event.target.value)}
+                            >
+                              <option value="">Select item to add</option>
+                              {customerItemFlavors.map((flavor) => <option key={flavor.id} value={flavor.id}>{flavor.name}</option>)}
+                            </select>
+                            <Input
+                              className="w-20"
+                              type="number"
+                              min={1}
+                              aria-label="New item quantity"
+                              value={customerItemQuantity}
+                              onChange={(event) => setCustomerItemQuantity(Math.max(1, Math.floor(Number(event.target.value) || 1)))}
+                            />
+                            <Button
+                              variant="outline"
+                              onClick={() => {
+                                const flavor = customerItemFlavors.find((item) => item.id === customerItemFlavorId);
+                                if (!flavor) return toast.error("Select an item to add.");
+                                setEditedCustomerItems((items) => {
+                                  const existing = items.find((item) => item.flavorId === flavor.id);
+                                  return existing
+                                    ? items.map((item) => item.flavorId === flavor.id ? { ...item, quantity: item.quantity + customerItemQuantity } : item)
+                                    : [...items, { flavorId: flavor.id, flavorName: flavor.name, quantity: customerItemQuantity }];
+                                });
+                                setCustomerItemFlavorId("");
+                                setCustomerItemQuantity(1);
+                              }}
+                            >
+                              Add Item
+                            </Button>
+                          </div>
+
+                          <Button
+                            onClick={async () => {
+                              try {
+                                await updateCustomerPurchaseItems(customer.id, editedCustomerItems);
+                                toast.success("Bought items updated");
+                              } catch (error) {
+                                toast.error(error instanceof Error ? error.message : "Unable to update bought items.");
+                              }
+                            }}
+                          >
+                            Save Bought Items
+                          </Button>
+                        </div>
+                      )}
                     </Card>
                   );
                 })}
@@ -569,14 +680,18 @@ export function AdminDashboard() {
                   {sales.map((sale) => (
                     <div key={sale.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/10 p-3 text-sm">
                       <div>
-                        <p className="font-semibold">{sale.customerName} · {sale.flavorName}</p>
+                        <p className="font-semibold">{sale.customerName} · {sale.brandName} - {sale.flavorName}</p>
                         <p className="text-white/70">{sale.quantity} pod(s) · {toCurrency(sale.amount)}</p>
                       </div>
                       <Button
                         variant="danger"
                         onClick={async () => {
-                          await deleteSale(sale.id);
-                          toast.success("Sale record removed");
+                          try {
+                            await deleteSale(sale.id);
+                            toast.success("Sale removed and customer purchase total updated");
+                          } catch (error) {
+                            toast.error(error instanceof Error ? error.message : "Unable to remove sale record.");
+                          }
                         }}
                       >
                         Remove

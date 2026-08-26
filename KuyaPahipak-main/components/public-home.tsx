@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { categoryLabel, subscribeBrands, subscribeCustomers, subscribeFlavors } from "@/lib/firestore";
 import { computeRewardState } from "@/lib/reward";
-import type { Brand, Customer, Flavor } from "@/lib/types";
+import { PRODUCT_STATUS_LABELS, productStatusRank, type Brand, type Customer, type Flavor } from "@/lib/types";
 
 const sorters = {
   most: (a: Customer, b: Customer) => b.totalPurchased - a.totalPurchased,
@@ -59,21 +59,17 @@ export function PublicHome() {
 
   const grouped = useMemo(
     () => ({
-      transparent: brands.filter((brand) => brand.category === "transparent"),
-      "non-transparent": brands.filter((brand) => brand.category === "non-transparent"),
+      transparent: brands.filter((brand) => brand.category === "transparent").sort((a, b) => productStatusRank(a.status) - productStatusRank(b.status) || a.name.localeCompare(b.name)),
+      "non-transparent": brands.filter((brand) => brand.category === "non-transparent").sort((a, b) => productStatusRank(a.status) - productStatusRank(b.status) || a.name.localeCompare(b.name)),
     }),
     [brands],
   );
 
-  const brandIsAvailable = (brandId: string) => flavors.some((flavor) => flavor.brandId === brandId && flavor.stock > 0);
-
   const selectedFlavors = useMemo(() => {
     if (!selectedBrand) return [];
-    return flavors.filter(
-      (flavor) =>
-        flavor.brandId === selectedBrand.id &&
-        flavor.name.toLowerCase().includes(flavorSearch.toLowerCase().trim()),
-    );
+    return flavors
+      .filter((flavor) => flavor.brandId === selectedBrand.id && flavor.name.toLowerCase().includes(flavorSearch.toLowerCase().trim()))
+      .sort((a, b) => Number(b.stock > 0) - Number(a.stock > 0) || a.name.localeCompare(b.name));
   }, [selectedBrand, flavors, flavorSearch]);
 
   const filteredCustomers = useMemo(() => {
@@ -106,25 +102,32 @@ export function PublicHome() {
               </div>
               <div className="grid gap-4 sm:grid-cols-2">
                 {grouped[category].map((brand) => {
-                  const available = brandIsAvailable(brand.id);
+                  const status = brand.status ?? "available";
+                  const isSoldOut = status === "sold-out";
+                  const statusBadgeClass =
+                    status === "available"
+                      ? "bg-emerald-500/20 text-emerald-100"
+                      : status === "coming-soon"
+                        ? "bg-amber-500/20 text-amber-100"
+                        : "bg-red-500/20 text-red-200";
                   return (
                   <motion.button
                     key={brand.id}
-                    whileHover={available ? { y: -4 } : undefined}
-                    disabled={!available}
-                    aria-disabled={!available}
-                    className={`overflow-hidden rounded-xl border border-white/10 bg-black/40 text-left transition ${available ? "" : "cursor-not-allowed opacity-55 grayscale"}`}
+                    whileHover={isSoldOut ? {} : { y: -4 }}
+                    className={`overflow-hidden rounded-xl border border-white/10 bg-black/40 text-left transition ${isSoldOut ? "pointer-events-none cursor-not-allowed opacity-50 grayscale" : ""}`}
+                    disabled={isSoldOut}
+                    tabIndex={isSoldOut ? -1 : 0}
                     onClick={() => {
-                      if (!available) return;
+                      if (isSoldOut) return;
                       setFlavorSearch("");
                       setSelectedBrand(brand);
                     }}
                   >
-                    <ProductImage src={brand.imageUrl} alt={brand.name} className="h-56 w-full bg-black/20 object-contain" />
+                    <ProductImage src={brand.imageUrl} alt={brand.name} className={`h-56 w-full bg-black/20 object-contain ${isSoldOut ? "select-none" : ""}`} />
                     <div className="p-3">
                       <div className="flex items-center justify-between gap-2">
-                        <p className="font-semibold">{brand.name}</p>
-                        {!available && <Badge className="bg-white/10 text-white">Unavailable</Badge>}
+                        <p className={`font-semibold ${isSoldOut ? "text-white/50" : ""}`}>{brand.name}</p>
+                        <Badge className={statusBadgeClass}>{PRODUCT_STATUS_LABELS[status]}</Badge>
                       </div>
                     </div>
                   </motion.button>
@@ -210,7 +213,7 @@ export function PublicHome() {
                 </div>
                 <div className="min-w-0">
                   <div className="mb-4 flex flex-col gap-2">
-                    <h3 className="text-2xl font-bold">{selectedBrand.name}</h3>
+                    <div className="flex items-center gap-2"><h3 className="text-2xl font-bold">{selectedBrand.name}</h3><Badge className={(selectedBrand.status ?? "available") === "available" ? "bg-emerald-500/20 text-emerald-100" : (selectedBrand.status ?? "available") === "coming-soon" ? "bg-amber-500/20 text-amber-100" : "bg-red-500/20 text-red-200"}>{PRODUCT_STATUS_LABELS[selectedBrand.status ?? "available"]}</Badge></div>
                     <Input
                       value={flavorSearch}
                       onChange={(event) => setFlavorSearch(event.target.value)}

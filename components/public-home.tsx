@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { categoryLabel, subscribeBrands, subscribeCustomers, subscribeFlavors } from "@/lib/firestore";
 import { computeRewardState } from "@/lib/reward";
-import type { Brand, Customer, Flavor } from "@/lib/types";
+import { PRODUCT_STATUS_LABELS, productStatusRank, type Brand, type Customer, type Flavor } from "@/lib/types";
 
 const sorters = {
   most: (a: Customer, b: Customer) => b.totalPurchased - a.totalPurchased,
@@ -24,6 +24,24 @@ const sorters = {
   },
   alpha: (a: Customer, b: Customer) => a.name.localeCompare(b.name),
 };
+
+const FALLBACK_IMAGE = "/placeholder-brand-1.svg";
+
+function ProductImage({ src, alt, className }: { src: string; alt: string; className: string }) {
+  return (
+    // Cloudinary URLs are user-provided at runtime; a native image keeps the error fallback reliable.
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={src || FALLBACK_IMAGE}
+      alt={alt}
+      className={className}
+      onError={(event) => {
+        if (event.currentTarget.src.endsWith(FALLBACK_IMAGE)) return;
+        event.currentTarget.src = FALLBACK_IMAGE;
+      }}
+    />
+  );
+}
 
 export function PublicHome() {
   const [brands, setBrands] = useState<Brand[]>([]);
@@ -41,19 +59,17 @@ export function PublicHome() {
 
   const grouped = useMemo(
     () => ({
-      transparent: brands.filter((brand) => brand.category === "transparent"),
-      "non-transparent": brands.filter((brand) => brand.category === "non-transparent"),
+      transparent: brands.filter((brand) => brand.category === "transparent").sort((a, b) => productStatusRank(a.status) - productStatusRank(b.status) || a.name.localeCompare(b.name)),
+      "non-transparent": brands.filter((brand) => brand.category === "non-transparent").sort((a, b) => productStatusRank(a.status) - productStatusRank(b.status) || a.name.localeCompare(b.name)),
     }),
     [brands],
   );
 
   const selectedFlavors = useMemo(() => {
     if (!selectedBrand) return [];
-    return flavors.filter(
-      (flavor) =>
-        flavor.brandId === selectedBrand.id &&
-        flavor.name.toLowerCase().includes(flavorSearch.toLowerCase().trim()),
-    );
+    return flavors
+      .filter((flavor) => flavor.brandId === selectedBrand.id && flavor.name.toLowerCase().includes(flavorSearch.toLowerCase().trim()))
+      .sort((a, b) => Number(b.stock > 0) - Number(a.stock > 0) || a.name.localeCompare(b.name));
   }, [selectedBrand, flavors, flavorSearch]);
 
   const filteredCustomers = useMemo(() => {
@@ -82,25 +98,41 @@ export function PublicHome() {
             <Card key={category} className="space-y-4">
               <div className="flex items-center justify-between">
                 <h2 className="text-xl font-bold">{categoryLabel(category)}</h2>
-                <Badge>{grouped[category].length} Brands</Badge>
+                <Badge className="brand-count-badge">{grouped[category].length} Brands</Badge>
               </div>
               <div className="grid gap-4 sm:grid-cols-2">
-                {grouped[category].map((brand) => (
+                {grouped[category].map((brand) => {
+                  const status = brand.status ?? "available";
+                  const isSoldOut = status === "sold-out";
+                  const statusBadgeClass =
+                    status === "available"
+                      ? "bg-emerald-500/20 text-emerald-100"
+                      : status === "coming-soon"
+                        ? "bg-amber-500/20 text-amber-100"
+                        : "bg-red-500/20 text-red-200";
+                  return (
                   <motion.button
                     key={brand.id}
-                    whileHover={{ y: -4 }}
-                    className="overflow-hidden rounded-xl border border-white/10 bg-black/40 text-left"
+                    whileHover={isSoldOut ? {} : { y: -4 }}
+                    className={`overflow-hidden rounded-xl border border-white/10 bg-black/40 text-left transition ${isSoldOut ? "pointer-events-none cursor-not-allowed opacity-50 grayscale" : ""}`}
+                    disabled={isSoldOut}
+                    tabIndex={isSoldOut ? -1 : 0}
                     onClick={() => {
+                      if (isSoldOut) return;
                       setFlavorSearch("");
                       setSelectedBrand(brand);
                     }}
                   >
-                    <img src={brand.imageUrl} alt={brand.name} className="h-28 w-full object-cover" />
+                    <ProductImage src={brand.imageUrl} alt={brand.name} className={`h-56 w-full bg-black/20 object-contain ${isSoldOut ? "select-none" : ""}`} />
                     <div className="p-3">
-                      <p className="font-semibold">{brand.name}</p>
+                      <div className="flex items-center justify-between gap-2">
+                        <p className={`font-semibold ${isSoldOut ? "text-white/50" : ""}`}>{brand.name}</p>
+                        <Badge className={statusBadgeClass}>{PRODUCT_STATUS_LABELS[status]}</Badge>
+                      </div>
                     </div>
                   </motion.button>
-                ))}
+                  );
+                })}
               </div>
             </Card>
           ))}
@@ -175,24 +207,33 @@ export function PublicHome() {
               exit={{ scale: 0.9, opacity: 0 }}
               onClick={(event) => event.stopPropagation()}
             >
-              <img src={selectedBrand.imageUrl} alt={selectedBrand.name} className="mb-4 h-52 w-full rounded-xl object-cover" />
-              <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                <h3 className="text-2xl font-bold">{selectedBrand.name}</h3>
-                <Input
-                  value={flavorSearch}
-                  onChange={(event) => setFlavorSearch(event.target.value)}
-                  placeholder="Search flavor"
-                  className="max-w-xs"
-                />
-              </div>
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                {selectedFlavors.map((flavor) => (
-                  <Card key={flavor.id} className="space-y-2">
-                    <img src={flavor.imageUrl} alt={flavor.name} className="h-28 w-full rounded-xl object-cover" />
-                    <p className="font-semibold">{flavor.name}</p>
-                    <p className="text-sm text-white/80">{flavor.stock > 0 ? `Stock: ${flavor.stock}` : "Out of Stock"}</p>
-                  </Card>
-                ))}
+              <div className="grid gap-5 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+                <div className="flex min-h-80 items-center justify-center rounded-xl bg-black/20 p-3">
+                  <ProductImage src={selectedBrand.imageUrl} alt={selectedBrand.name} className="max-h-[32rem] w-full rounded-lg object-contain" />
+                </div>
+                <div className="min-w-0">
+                  <div className="mb-4 flex flex-col gap-2">
+                    <div className="flex items-center gap-2"><h3 className="text-2xl font-bold">{selectedBrand.name}</h3><Badge className={(selectedBrand.status ?? "available") === "available" ? "bg-emerald-500/20 text-emerald-100" : (selectedBrand.status ?? "available") === "coming-soon" ? "bg-amber-500/20 text-amber-100" : "bg-red-500/20 text-red-200"}>{PRODUCT_STATUS_LABELS[selectedBrand.status ?? "available"]}</Badge></div>
+                    <Input
+                      value={flavorSearch}
+                      onChange={(event) => setFlavorSearch(event.target.value)}
+                      placeholder="Search flavor"
+                    />
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    {selectedFlavors.map((flavor) => {
+                      const available = flavor.stock > 0;
+                      return (
+                      <Card key={flavor.id} aria-disabled={!available} className={`space-y-2 ${available ? "" : "cursor-not-allowed opacity-55 grayscale"}`}>
+                        <p className="font-semibold">{flavor.name}</p>
+                        <p className="text-sm text-white/80">{available ? `Stock: ${flavor.stock}` : "Out of Stock"}</p>
+                        {!available && <Badge className="w-fit bg-white/10 text-white">Unavailable</Badge>}
+                      </Card>
+                      );
+                    })}
+                    {!selectedFlavors.length && <p className="text-sm text-white/70">No flavors found.</p>}
+                  </div>
+                </div>
               </div>
             </motion.div>
           </motion.div>

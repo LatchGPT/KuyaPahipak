@@ -1,10 +1,22 @@
 export type PodCategory = "transparent" | "non-transparent";
+export type ProductStatus = "available" | "coming-soon" | "sold-out";
+
+export const PRODUCT_STATUS_LABELS: Record<ProductStatus, string> = {
+  available: "Available",
+  "coming-soon": "Coming Soon",
+  "sold-out": "Sold Out",
+};
+
+export const productStatusRank = (status?: ProductStatus) =>
+  ({ available: 0, "coming-soon": 1, "sold-out": 2 })[status ?? "available"];
 
 export interface Brand {
   id: string;
   name: string;
   imageUrl: string;
   category: PodCategory;
+  status?: ProductStatus;
+  price?: number;
   createdAt?: number;
 }
 

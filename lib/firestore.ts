@@ -6,6 +6,7 @@ import {
   deleteDoc,
   doc,
   getDoc,
+  getDocs,
   onSnapshot,
   orderBy,
   query,
@@ -13,29 +14,12 @@ import {
   serverTimestamp,
   setDoc,
   updateDoc,
+  where,
+  writeBatch,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { assertStockAvailable, computeRewardState } from "@/lib/reward";
-import type { Brand, Claim, Customer, Flavor, PodCategory, Sale, Settings } from "@/lib/types";
-
-const fallbackBrands: Brand[] = [
-  { id: "jnr", name: "JNR", imageUrl: "/placeholder-brand-1.svg", category: "non-transparent" },
-  { id: "geek-bar", name: "Geek Bar", imageUrl: "/placeholder-brand-2.svg", category: "transparent" },
-  { id: "al-fakher", name: "Al Fakher", imageUrl: "/placeholder-brand-3.svg", category: "non-transparent" },
-  { id: "oxbar", name: "Oxbar", imageUrl: "/placeholder-brand-4.svg", category: "transparent" },
-];
-
-const fallbackFlavors: Flavor[] = [
-  { id: "f1", brandId: "jnr", name: "Strawberry Ice", imageUrl: "/placeholder-flavor-1.svg", stock: 25, lowStockAlert: 10 },
-  { id: "f2", brandId: "jnr", name: "Blue Razz", imageUrl: "/placeholder-flavor-2.svg", stock: 6, lowStockAlert: 10 },
-  { id: "f3", brandId: "geek-bar", name: "Watermelon", imageUrl: "/placeholder-flavor-3.svg", stock: 15, lowStockAlert: 10 },
-  { id: "f4", brandId: "oxbar", name: "Grape", imageUrl: "/placeholder-flavor-4.svg", stock: 0, lowStockAlert: 10 },
-];
-
-const fallbackCustomers: Customer[] = [
-  { id: "c1", name: "Carlo Dela Cruz", totalPurchased: 26, totalRedeemed: 0, items: [{ flavorId: "f2", flavorName: "Blue Razz", quantity: 12 }, { flavorId: "f3", flavorName: "Watermelon", quantity: 8 }, { flavorId: "f4", flavorName: "Grape", quantity: 6 }] },
-  { id: "c2", name: "Mia Santos", totalPurchased: 45, totalRedeemed: 1, items: [{ flavorId: "f1", flavorName: "Strawberry Ice", quantity: 25 }, { flavorId: "f3", flavorName: "Watermelon", quantity: 20 }] },
-];
+import type { Brand, Claim, Customer, Flavor, PodCategory, PurchaseItem, Sale, Settings } from "@/lib/types";
 
 const noop = () => undefined;
 const ensureDb = () => {
@@ -44,34 +28,34 @@ const ensureDb = () => {
 
 export function subscribeBrands(callback: (brands: Brand[]) => void) {
   if (!db) {
-    callback(fallbackBrands);
+    callback([]);
     return noop;
   }
   return onSnapshot(query(collection(db, "brands"), orderBy("name")), (snapshot) => {
     const rows = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }) as Brand);
-    callback(rows.length ? rows : fallbackBrands);
+    callback(rows);
   });
 }
 
 export function subscribeFlavors(callback: (flavors: Flavor[]) => void) {
   if (!db) {
-    callback(fallbackFlavors);
+    callback([]);
     return noop;
   }
   return onSnapshot(query(collection(db, "flavors"), orderBy("name")), (snapshot) => {
     const rows = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }) as Flavor);
-    callback(rows.length ? rows : fallbackFlavors);
+    callback(rows);
   });
 }
 
 export function subscribeCustomers(callback: (customers: Customer[]) => void) {
   if (!db) {
-    callback(fallbackCustomers);
+    callback([]);
     return noop;
   }
   return onSnapshot(query(collection(db, "customers"), orderBy("name")), (snapshot) => {
     const rows = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }) as Customer);
-    callback(rows.length ? rows : fallbackCustomers);
+    callback(rows);
   });
 }
 
@@ -80,9 +64,11 @@ export function subscribeSales(callback: (sales: Sale[]) => void) {
     callback([]);
     return noop;
   }
-  return onSnapshot(query(collection(db, "sales"), orderBy("createdAt", "desc")), (snapshot) => {
-    callback(snapshot.docs.map((d) => ({ id: d.id, ...d.data() }) as Sale));
-  });
+  return onSnapshot(
+    query(collection(db, "sales"), orderBy("createdAt", "desc")),
+    (snapshot) => callback(snapshot.docs.map((d) => ({ id: d.id, ...d.data() }) as Sale)),
+    () => callback([]),
+  );
 }
 
 export function subscribeClaims(callback: (claims: Claim[]) => void) {
@@ -107,7 +93,14 @@ export async function updateBrand(id: string, payload: Partial<Brand>) {
 
 export async function deleteBrand(id: string) {
   ensureDb();
-  await deleteDoc(doc(db!, "brands", id));
+  const flavorSnapshots = await getDocs(query(collection(db!, "flavors"), where("brandId", "==", id)));
+  const batch = writeBatch(db!);
+  batch.delete(doc(db!, "brands", id));
+  flavorSnapshots.forEach((flavor) => {
+    batch.delete(flavor.ref);
+    batch.delete(doc(db!, "inventory", flavor.id));
+  });
+  await batch.commit();
 }
 
 export async function createFlavor(payload: Omit<Flavor, "id">) {
@@ -122,7 +115,10 @@ export async function updateFlavor(id: string, payload: Partial<Flavor>) {
 
 export async function deleteFlavor(id: string) {
   ensureDb();
-  await deleteDoc(doc(db!, "flavors", id));
+  const batch = writeBatch(db!);
+  batch.delete(doc(db!, "flavors", id));
+  batch.delete(doc(db!, "inventory", id));
+  await batch.commit();
 }
 
 export async function createCustomer(payload: Omit<Customer, "id" | "items" | "totalPurchased" | "totalRedeemed">) {
@@ -144,6 +140,91 @@ export async function updateCustomer(id: string, payload: Partial<Customer>) {
 export async function deleteCustomer(id: string) {
   ensureDb();
   await deleteDoc(doc(db!, "customers", id));
+}
+
+export async function deleteSale(id: string) {
+  ensureDb();
+  await runTransaction(db!, async (transaction) => {
+    const saleRef = doc(db!, "sales", id);
+    const saleSnap = await transaction.get(saleRef);
+    if (!saleSnap.exists()) throw new Error("Sale record not found.");
+
+    const sale = saleSnap.data() as Sale;
+    const customerRef = doc(db!, "customers", sale.customerId);
+    const flavorRef = doc(db!, "flavors", sale.flavorId);
+    const inventoryRef = doc(db!, "inventory", sale.flavorId);
+    const [customerSnap, flavorSnap, inventorySnap] = await Promise.all([
+      transaction.get(customerRef),
+      transaction.get(flavorRef),
+      transaction.get(inventoryRef),
+    ]);
+
+    if (!customerSnap.exists()) throw new Error("The customer for this sale no longer exists.");
+
+    const customer = customerSnap.data() as Customer;
+    const purchaseItems = customer.items ?? [];
+    const items = purchaseItems
+      .map((item) => item.flavorId === sale.flavorId ? { ...item, quantity: item.quantity - sale.quantity } : item)
+      .filter((item) => item.quantity > 0);
+    const totalPurchased = Math.max(0, Number(customer.totalPurchased ?? 0) - sale.quantity);
+    const reward = computeRewardState(totalPurchased, Number(customer.totalRedeemed ?? 0));
+
+    transaction.update(customerRef, {
+      items,
+      totalPurchased,
+      rewardProgress: reward.progress,
+      claimableRewards: reward.claimable,
+    });
+
+    // A deleted sale is a reversal, so return its pods to stock when the product still exists.
+    if (flavorSnap.exists()) {
+      const flavor = flavorSnap.data() as Flavor;
+      const currentStock = inventorySnap.exists() ? Number(inventorySnap.data().stock ?? flavor.stock) : flavor.stock;
+      const restoredStock = currentStock + sale.quantity;
+      transaction.update(flavorRef, { stock: restoredStock });
+      transaction.set(inventoryRef, {
+        flavorId: sale.flavorId,
+        flavorName: sale.flavorName,
+        stock: restoredStock,
+        updatedAt: serverTimestamp(),
+      });
+    }
+
+    transaction.delete(saleRef);
+  });
+}
+
+export async function updateCustomerPurchaseItems(id: string, items: PurchaseItem[]) {
+  ensureDb();
+  await runTransaction(db!, async (transaction) => {
+    const customerRef = doc(db!, "customers", id);
+    const customerSnap = await transaction.get(customerRef);
+    if (!customerSnap.exists()) throw new Error("Customer not found.");
+
+    const mergedItems = new Map<string, PurchaseItem>();
+    for (const item of items) {
+      const quantity = Number(item.quantity);
+      if (!item.flavorId || !item.flavorName || !Number.isFinite(quantity) || quantity <= 0) continue;
+      const existing = mergedItems.get(item.flavorId);
+      mergedItems.set(item.flavorId, {
+        flavorId: item.flavorId,
+        flavorName: item.flavorName,
+        quantity: (existing?.quantity ?? 0) + Math.floor(quantity),
+      });
+    }
+
+    const normalizedItems = Array.from(mergedItems.values());
+    const totalPurchased = normalizedItems.reduce((total, item) => total + item.quantity, 0);
+    const customer = customerSnap.data() as Customer;
+    const reward = computeRewardState(totalPurchased, Number(customer.totalRedeemed ?? 0));
+
+    transaction.update(customerRef, {
+      items: normalizedItems,
+      totalPurchased,
+      rewardProgress: reward.progress,
+      claimableRewards: reward.claimable,
+    });
+  });
 }
 
 export async function saveSettings(settings: Settings) {
@@ -254,14 +335,43 @@ export async function redeemFreePod(input: {
 }
 
 export async function uploadImage(file: File, folder: "brands" | "flavors") {
-  const { ref, uploadBytes, getDownloadURL } = await import("firebase/storage");
-  const { storage } = await import("@/lib/firebase");
-  if (!storage) throw new Error("Firebase storage is not configured.");
-  const imageRef = ref(storage, `${folder}/${crypto.randomUUID()}-${file.name}`);
-  await uploadBytes(imageRef, file);
-  return getDownloadURL(imageRef);
+  if (!file.type.startsWith("image/")) throw new Error("Please choose an image file.");
+  if (file.size > 5 * 1024 * 1024) throw new Error("Image must be 5 MB or smaller.");
+  const cloudName = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME;
+  const uploadPreset = process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET;
+  if (!cloudName || !uploadPreset) {
+    throw new Error("Cloudinary is not configured. Add NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME and NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET to .env.local.");
+  }
+  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "-");
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("upload_preset", uploadPreset);
+  formData.append("folder", `kuya-pahipak/${folder}`);
+  formData.append("public_id", `${crypto.randomUUID()}-${safeName.replace(/\.[^/.]+$/, "")}`);
+
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 30_000);
+  try {
+    const response = await fetch(`https://api.cloudinary.com/v1_1/${encodeURIComponent(cloudName)}/image/upload`, {
+      method: "POST",
+      body: formData,
+      signal: controller.signal,
+    });
+    const result = (await response.json()) as { secure_url?: string; error?: { message?: string } };
+    if (!response.ok || !result.secure_url) {
+      throw new Error(result.error?.message || "Cloudinary rejected the image upload.");
+    }
+    return result.secure_url;
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error("Image upload timed out. Check your connection and Cloudinary upload preset.");
+    }
+    throw error instanceof Error ? error : new Error("Image upload failed.");
+  } finally {
+    window.clearTimeout(timeout);
+  }
 }
 
 export function categoryLabel(category: PodCategory) {
-  return category === "transparent" ? "Transparent Pods" : "Non-Transparent Pods";
+  return category === "transparent" ? "Transparent Pods and Battery" : "Non-Transparent Pods and Battery";
 }
