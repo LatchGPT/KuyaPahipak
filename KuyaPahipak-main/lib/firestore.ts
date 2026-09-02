@@ -111,6 +111,14 @@ export async function createFlavor(payload: Omit<Flavor, "id">) {
 export async function updateFlavor(id: string, payload: Partial<Flavor>) {
   ensureDb();
   await updateDoc(doc(db!, "flavors", id), payload);
+  if (typeof payload.stock === "number") {
+    await setDoc(doc(db!, "inventory", id), {
+      flavorId: id,
+      flavorName: payload.name ?? "",
+      stock: payload.stock,
+      updatedAt: serverTimestamp(),
+    }, { merge: true });
+  }
 }
 
 export async function deleteFlavor(id: string) {
@@ -153,10 +161,9 @@ export async function deleteSale(id: string) {
     const customerRef = doc(db!, "customers", sale.customerId);
     const flavorRef = doc(db!, "flavors", sale.flavorId);
     const inventoryRef = doc(db!, "inventory", sale.flavorId);
-    const [customerSnap, flavorSnap, inventorySnap] = await Promise.all([
+    const [customerSnap, flavorSnap] = await Promise.all([
       transaction.get(customerRef),
       transaction.get(flavorRef),
-      transaction.get(inventoryRef),
     ]);
 
     if (!customerSnap.exists()) throw new Error("The customer for this sale no longer exists.");
@@ -179,7 +186,7 @@ export async function deleteSale(id: string) {
     // A deleted sale is a reversal, so return its pods to stock when the product still exists.
     if (flavorSnap.exists()) {
       const flavor = flavorSnap.data() as Flavor;
-      const currentStock = inventorySnap.exists() ? Number(inventorySnap.data().stock ?? flavor.stock) : flavor.stock;
+      const currentStock = Number(flavor.stock ?? 0);
       const restoredStock = currentStock + sale.quantity;
       transaction.update(flavorRef, { stock: restoredStock });
       transaction.set(inventoryRef, {
@@ -264,30 +271,32 @@ export async function recordPurchase(input: {
     const customerRef = doc(db!, "customers", input.customerId);
     const inventoryRef = doc(db!, "inventory", input.flavorId);
 
-    const [flavorSnap, customerSnap, inventorySnap] = await Promise.all([
+    const [flavorSnap, customerSnap] = await Promise.all([
       transaction.get(flavorRef),
       transaction.get(customerRef),
-      transaction.get(inventoryRef),
     ]);
 
     if (!flavorSnap.exists() || !customerSnap.exists()) throw new Error("Flavor or customer not found.");
 
     const flavor = flavorSnap.data() as Flavor;
     const customer = customerSnap.data() as Customer;
-    const currentStock = inventorySnap.exists() ? Number(inventorySnap.data().stock ?? flavor.stock) : flavor.stock;
+    const currentStock = Number(flavor.stock ?? 0);
     assertStockAvailable(currentStock, input.quantity);
 
-    const existingItem = customer.items.find((i) => i.flavorId === input.flavorId);
+    const newStock = Math.max(0, currentStock - input.quantity);
+
+    const customerItems = customer.items ?? [];
+    const existingItem = customerItems.find((i) => i.flavorId === input.flavorId);
     const items = existingItem
-      ? customer.items.map((item) => (item.flavorId === input.flavorId ? { ...item, quantity: item.quantity + input.quantity } : item))
-      : [...customer.items, { flavorId: input.flavorId, flavorName: input.flavorName, quantity: input.quantity }];
+      ? customerItems.map((item) => (item.flavorId === input.flavorId ? { ...item, quantity: item.quantity + input.quantity } : item))
+      : [...customerItems, { flavorId: input.flavorId, flavorName: input.flavorName, quantity: input.quantity }];
 
     const totalPurchased = customer.totalPurchased + input.quantity;
     const reward = computeRewardState(totalPurchased, customer.totalRedeemed);
 
     transaction.update(customerRef, { items, totalPurchased, rewardProgress: reward.progress, claimableRewards: reward.claimable });
-    transaction.update(flavorRef, { stock: currentStock - input.quantity });
-    transaction.set(inventoryRef, { flavorId: input.flavorId, flavorName: input.flavorName, stock: currentStock - input.quantity, updatedAt: serverTimestamp() });
+    transaction.update(flavorRef, { stock: newStock });
+    transaction.set(inventoryRef, { flavorId: input.flavorId, flavorName: input.flavorName, stock: newStock, updatedAt: serverTimestamp() });
     transaction.set(doc(collection(db!, "sales")), { ...input, createdAt: Date.now() });
   });
 }
@@ -304,10 +313,9 @@ export async function redeemFreePod(input: {
     const flavorRef = doc(db!, "flavors", input.flavorId);
     const inventoryRef = doc(db!, "inventory", input.flavorId);
 
-    const [customerSnap, flavorSnap, inventorySnap] = await Promise.all([
+    const [customerSnap, flavorSnap] = await Promise.all([
       transaction.get(customerRef),
       transaction.get(flavorRef),
-      transaction.get(inventoryRef),
     ]);
 
     if (!customerSnap.exists() || !flavorSnap.exists()) throw new Error("Customer or flavor not found.");
@@ -317,9 +325,10 @@ export async function redeemFreePod(input: {
     const reward = computeRewardState(customer.totalPurchased, customer.totalRedeemed);
     if (reward.claimable < 1) throw new Error("Customer has no claimable free pods.");
 
-    const currentStock = inventorySnap.exists() ? Number(inventorySnap.data().stock ?? flavor.stock) : flavor.stock;
+    const currentStock = Number(flavor.stock ?? 0);
     assertStockAvailable(currentStock, 1);
 
+    const newStock = Math.max(0, currentStock - 1);
     const updatedRedeemed = customer.totalRedeemed + 1;
     const updatedReward = computeRewardState(customer.totalPurchased, updatedRedeemed);
 
@@ -328,8 +337,8 @@ export async function redeemFreePod(input: {
       claimableRewards: updatedReward.claimable,
       rewardProgress: updatedReward.progress,
     });
-    transaction.update(flavorRef, { stock: currentStock - 1 });
-    transaction.set(inventoryRef, { flavorId: input.flavorId, flavorName: input.flavorName, stock: currentStock - 1, updatedAt: serverTimestamp() });
+    transaction.update(flavorRef, { stock: newStock });
+    transaction.set(inventoryRef, { flavorId: input.flavorId, flavorName: input.flavorName, stock: newStock, updatedAt: serverTimestamp() });
     transaction.set(doc(collection(db!, "claims")), { ...input, quantity: 1, createdAt: Date.now() });
   });
 }

@@ -152,10 +152,19 @@ export function AdminDashboard() {
     [catalogFlavors, redeem.brandId],
   );
 
-  const customerItemFlavors = useMemo(
-    () => catalogFlavors.slice().sort((left, right) => left.name.localeCompare(right.name)),
-    [catalogFlavors],
-  );
+  const customerItemFlavors = useMemo(() => {
+    const brandMap = new Map(brands.map((b) => [b.id, b.name]));
+    return catalogFlavors
+      .map((flavor) => ({
+        ...flavor,
+        brandName: brandMap.get(flavor.brandId) || "Unknown Brand",
+      }))
+      .sort((a, b) => {
+        const brandDiff = a.brandName.localeCompare(b.brandName);
+        if (brandDiff !== 0) return brandDiff;
+        return a.name.localeCompare(b.name);
+      });
+  }, [catalogFlavors, brands]);
 
   const dashboardCards = useMemo(() => {
     const now = new Date();
@@ -531,24 +540,30 @@ export function AdminDashboard() {
                           </div>
 
                           <div className="space-y-2">
-                            {editedCustomerItems.map((item) => (
-                              <div key={item.flavorId} className="flex flex-wrap items-center gap-2 rounded-xl border border-white/10 p-2">
-                                <p className="min-w-32 flex-1 text-sm">{item.flavorName}</p>
-                                <Input
-                                  className="w-20"
-                                  type="number"
-                                  min={1}
-                                  aria-label={`${item.flavorName} quantity`}
-                                  value={item.quantity}
-                                  onChange={(event) => setEditedCustomerItems((items) => items.map((currentItem) => (
-                                    currentItem.flavorId === item.flavorId
-                                      ? { ...currentItem, quantity: Math.max(1, Math.floor(Number(event.target.value) || 1)) }
-                                      : currentItem
-                                  )))}
-                                />
-                                <Button variant="danger" onClick={() => setEditedCustomerItems((items) => items.filter((currentItem) => currentItem.flavorId !== item.flavorId))}>Remove</Button>
-                              </div>
-                            ))}
+                            {editedCustomerItems.map((item) => {
+                              const matchingFlavor = customerItemFlavors.find((f) => f.id === item.flavorId);
+                              const displayName = matchingFlavor && !item.flavorName.toLowerCase().startsWith(matchingFlavor.brandName.toLowerCase())
+                                 ? `${matchingFlavor.brandName} - ${item.flavorName}`
+                                 : item.flavorName;
+                              return (
+                                 <div key={item.flavorId} className="flex flex-wrap items-center gap-2 rounded-xl border border-white/10 p-2">
+                                   <p className="min-w-32 flex-1 text-sm">{displayName}</p>
+                                   <Input
+                                     className="w-20"
+                                     type="number"
+                                     min={1}
+                                     aria-label={`${displayName} quantity`}
+                                     value={item.quantity}
+                                     onChange={(event) => setEditedCustomerItems((items) => items.map((currentItem) => (
+                                       currentItem.flavorId === item.flavorId
+                                         ? { ...currentItem, quantity: Math.max(1, Math.floor(Number(event.target.value) || 1)) }
+                                         : currentItem
+                                     )))}
+                                   />
+                                   <Button variant="danger" onClick={() => setEditedCustomerItems((items) => items.filter((currentItem) => currentItem.flavorId !== item.flavorId))}>Remove</Button>
+                                 </div>
+                              );
+                            })}
                             {!editedCustomerItems.length && <p className="text-sm text-white/70">No bought items recorded.</p>}
                           </div>
 
@@ -559,7 +574,11 @@ export function AdminDashboard() {
                               onChange={(event) => setCustomerItemFlavorId(event.target.value)}
                             >
                               <option value="">Select item to add</option>
-                              {customerItemFlavors.map((flavor) => <option key={flavor.id} value={flavor.id}>{flavor.name}</option>)}
+                              {customerItemFlavors.map((flavor) => (
+                                <option key={flavor.id} value={flavor.id}>
+                                  {flavor.brandName} - {flavor.name}
+                                </option>
+                              ))}
                             </select>
                             <Input
                               className="w-20"
@@ -574,11 +593,12 @@ export function AdminDashboard() {
                               onClick={() => {
                                 const flavor = customerItemFlavors.find((item) => item.id === customerItemFlavorId);
                                 if (!flavor) return toast.error("Select an item to add.");
+                                const flavorDisplayName = `${flavor.brandName} - ${flavor.name}`;
                                 setEditedCustomerItems((items) => {
                                   const existing = items.find((item) => item.flavorId === flavor.id);
                                   return existing
-                                    ? items.map((item) => item.flavorId === flavor.id ? { ...item, quantity: item.quantity + customerItemQuantity } : item)
-                                    : [...items, { flavorId: flavor.id, flavorName: flavor.name, quantity: customerItemQuantity }];
+                                    ? items.map((item) => item.flavorId === flavor.id ? { ...item, flavorName: flavorDisplayName, quantity: item.quantity + customerItemQuantity } : item)
+                                    : [...items, { flavorId: flavor.id, flavorName: flavorDisplayName, quantity: customerItemQuantity }];
                                 });
                                 setCustomerItemFlavorId("");
                                 setCustomerItemQuantity(1);
@@ -622,26 +642,42 @@ export function AdminDashboard() {
                   {availableBrands.map((brand) => <option key={brand.id} value={brand.id}>{brand.name}</option>)}
                 </select>
                 <select className="h-10 rounded-xl bg-white/5 px-3" disabled={!purchase.brandId} value={purchase.flavorId} onChange={(e) => setPurchase((s) => ({ ...s, flavorId: e.target.value }))}>
-                  <option value="">{purchase.brandId ? "Select available flavor" : "Select brand first"}</option>
-                  {flavorOptions.map((flavor) => <option key={flavor.id} value={flavor.id}>{flavor.name}</option>)}
+                  <option value="">{purchase.brandId ? (flavorOptions.length ? "Select available flavor" : "No flavors in stock") : "Select brand first"}</option>
+                  {flavorOptions.map((flavor) => (
+                    <option key={flavor.id} value={flavor.id}>
+                      {flavor.name} ({flavor.stock} in stock)
+                    </option>
+                  ))}
                 </select>
                 <Input type="number" min={1} value={purchase.quantity} onChange={(e) => setPurchase((s) => ({ ...s, quantity: Number(e.target.value) }))} />
                 <Button onClick={async () => {
                   const customer = customers.find((x) => x.id === purchase.customerId);
                   const brand = brands.find((x) => x.id === purchase.brandId);
                   const flavor = catalogFlavors.find((x) => x.id === purchase.flavorId);
-                  if (!customer || !brand || !flavor || flavor.stock <= 0) return toast.error("Select an in-stock flavor to continue.");
-                  await recordPurchase({
-                    customerId: customer.id,
-                    customerName: customer.name,
-                    brandId: brand.id,
-                    brandName: brand.name,
-                    flavorId: flavor.id,
-                    flavorName: flavor.name,
-                    quantity: purchase.quantity,
-                    amount: purchase.quantity * (brand.price ?? settings.podPrice),
-                  });
-                  toast.success("Purchase saved");
+                  if (!customer) return toast.error("Please select a customer.");
+                  if (!brand) return toast.error("Please select a brand.");
+                  if (!flavor) return toast.error("Please select a flavor.");
+                  const qty = Math.max(1, Math.floor(Number(purchase.quantity) || 1));
+                  if (flavor.stock < qty) {
+                    return toast.error(`Insufficient stock for ${flavor.name} (Available: ${flavor.stock}, Requested: ${qty}). Please increase stock in Products or Inventory.`);
+                  }
+                  try {
+                    await recordPurchase({
+                      customerId: customer.id,
+                      customerName: customer.name,
+                      brandId: brand.id,
+                      brandName: brand.name,
+                      flavorId: flavor.id,
+                      flavorName: flavor.name,
+                      quantity: qty,
+                      amount: qty * (brand.price ?? settings.podPrice),
+                    });
+                    setPurchase({ customerId: "", brandId: "", flavorId: "", quantity: 1 });
+                    toast.success(`Purchase recorded: ${qty}x ${flavor.name} for ${customer.name}`);
+                  } catch (error) {
+                    console.error("Purchase error:", error);
+                    toast.error(error instanceof Error ? error.message : "Could not record purchase.");
+                  }
                 }}>Save Purchase</Button>
               </Card>
 
@@ -659,15 +695,28 @@ export function AdminDashboard() {
                   {availableBrands.map((brand) => <option key={brand.id} value={brand.id}>{brand.name}</option>)}
                 </select>
                 <select className="h-10 rounded-xl bg-white/5 px-3" disabled={!redeem.brandId} value={redeem.flavorId} onChange={(e) => setRedeem((s) => ({ ...s, flavorId: e.target.value }))}>
-                  <option value="">{redeem.brandId ? "Select available flavor" : "Select brand first"}</option>
-                  {redeemFlavorOptions.map((flavor) => <option key={flavor.id} value={flavor.id}>{flavor.name}</option>)}
+                  <option value="">{redeem.brandId ? (redeemFlavorOptions.length ? "Select available flavor" : "No flavors in stock") : "Select brand first"}</option>
+                  {redeemFlavorOptions.map((flavor) => (
+                    <option key={flavor.id} value={flavor.id}>
+                      {flavor.name} ({flavor.stock} in stock)
+                    </option>
+                  ))}
                 </select>
                 <Button onClick={async () => {
                   const customer = customers.find((x) => x.id === redeem.customerId);
                   const flavor = catalogFlavors.find((x) => x.id === redeem.flavorId);
-                  if (!customer || !redeem.brandId || !flavor || flavor.stock <= 0) return toast.error("Select a customer, brand, and in-stock flavor first.");
-                  await redeemFreePod({ customerId: customer.id, customerName: customer.name, flavorId: flavor.id, flavorName: flavor.name });
-                  toast.success("Free pod redeemed");
+                  if (!customer) return toast.error("Please select a customer.");
+                  if (!redeem.brandId) return toast.error("Please select a brand.");
+                  if (!flavor) return toast.error("Please select a flavor.");
+                  if (flavor.stock < 1) return toast.error(`${flavor.name} is out of stock (Stock: 0).`);
+                  try {
+                    await redeemFreePod({ customerId: customer.id, customerName: customer.name, flavorId: flavor.id, flavorName: flavor.name });
+                    setRedeem({ customerId: "", brandId: "", flavorId: "" });
+                    toast.success("Free pod redeemed");
+                  } catch (error) {
+                    console.error("Redeem error:", error);
+                    toast.error(error instanceof Error ? error.message : "Could not redeem free pod.");
+                  }
                 }}>Redeem</Button>
               </Card>
 
