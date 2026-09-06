@@ -9,7 +9,8 @@
 }
 
 body {
-  background: radial-gradient(circle at top right, #312e81 0%, #020617 45%, #000 100%);
+  background: radial-gradient(circle at top right, #450a0a 0%, #140303 35%, #000 100%);
+  color: #fff;
 }
 
 .logo-title {
@@ -121,5 +122,5 @@ select option {
 }
 
 * {
-  scrollbar-color: #7c3aed transparent;
+  scrollbar-color: #dc2626 #0a0a0a;
 }

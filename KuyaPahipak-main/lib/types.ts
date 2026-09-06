@@ -72,6 +72,24 @@ export interface Settings {
   id: string;
   lowStockDefault: number;
   podPrice: number;
+  transparentWeight?: number;
+  nonTransparentWeight?: number;
+  brandWeights?: Record<string, number>;
+}
+
+export interface SpinTicket {
+  id: string;
+  code: string;
+  customerId: string;
+  customerName: string;
+  status: "pending" | "claimed" | "expired";
+  categoryWon?: PodCategory;
+  brandWonId?: string;
+  brandWonName?: string;
+  flavorWonId?: string;
+  flavorWonName?: string;
+  createdAt: number;
+  claimedAt?: number;
 }
 
 export interface RewardState {
@@ -79,3 +97,4 @@ export interface RewardState {
   claimable: number;
   nextMilestone: number;
 }
+

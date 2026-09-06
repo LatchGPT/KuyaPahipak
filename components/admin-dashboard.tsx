@@ -3,14 +3,40 @@
 import { useEffect, useMemo, useState } from "react";
 import { onAuthStateChanged, signOut } from "firebase/auth";
 import { useRouter } from "next/navigation";
-import { motion } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { Menu, X } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowLeft,
+  Boxes,
+  CheckCircle2,
+  ChevronRight,
+  Copy,
+  Dices,
+  Edit2,
+  ExternalLink,
+  Eye,
+  Filter,
+  Layers,
+  Menu,
+  Package,
+  PackagePlus,
+  Plus,
+  RefreshCw,
+  Search,
+  SlidersHorizontal,
+  Sparkles,
+  Trash2,
+  Upload,
+  X,
+  XCircle,
+} from "lucide-react";
 import { auth } from "@/lib/firebase";
 import {
   createBrand,
   createCustomer,
   createFlavor,
+  createSpinTicket,
   deleteBrand,
   deleteCustomer,
   deleteFlavor,
@@ -25,6 +51,7 @@ import {
   subscribeCustomers,
   subscribeFlavors,
   subscribeSales,
+  subscribeSpinTickets,
   updateBrand,
   updateCustomer,
   updateCustomerPurchaseItems,
@@ -32,8 +59,22 @@ import {
   uploadImage,
 } from "@/lib/firestore";
 import { computeRewardState } from "@/lib/reward";
-import { PRODUCT_STATUS_LABELS, productStatusRank, type Brand, type Claim, type Customer, type Flavor, type PodCategory, type ProductStatus, type PurchaseItem, type Sale, type Settings } from "@/lib/types";
+import {
+  PRODUCT_STATUS_LABELS,
+  productStatusRank,
+  type Brand,
+  type Claim,
+  type Customer,
+  type Flavor,
+  type PodCategory,
+  type ProductStatus,
+  type PurchaseItem,
+  type Sale,
+  type Settings,
+  type SpinTicket,
+} from "@/lib/types";
 import { toCurrency } from "@/lib/utils";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -42,23 +83,30 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import { Progress } from "@/components/ui/progress";
 import { toast } from "sonner";
 
-const sections = ["Dashboard", "Products", "Inventory", "Customers", "Sales", "Analytics", "Reports", "Settings"] as const;
+const sections = ["Dashboard", "Products", "Inventory", "Customers", "Sales", "Roulette", "Analytics", "Reports", "Settings"] as const;
 type Section = (typeof sections)[number];
-const CHART_COLORS = ["#8b5cf6", "#22d3ee", "#f59e0b", "#f43f5e", "#34d399", "#60a5fa", "#e879f9"];
+const CHART_COLORS = ["#dc2626", "#ef4444", "#ffffff", "#71717a", "#b91c1c", "#fca5a5", "#27272a"];
 const BRAND_PLACEHOLDER = "/placeholder-brand-1.svg";
 const FLAVOR_PLACEHOLDER = "/placeholder-flavor-1.svg";
 
 function ProductImage({ src, alt, fallback = BRAND_PLACEHOLDER, className }: { src: string; alt: string; fallback?: string; className: string }) {
   // Cloudinary URLs are user-provided at runtime; a native image keeps the error fallback reliable.
   // eslint-disable-next-line @next/next/no-img-element
-  return <img src={src || fallback} alt={alt} className={className} onError={(event) => {
-    if (!event.currentTarget.src.endsWith(fallback)) event.currentTarget.src = fallback;
-  }} />;
+  return (
+    <img
+      src={src || fallback}
+      alt={alt}
+      className={className}
+      onError={(event) => {
+        if (!event.currentTarget.src.endsWith(fallback)) event.currentTarget.src = fallback;
+      }}
+    />
+  );
 }
 
 function exportWorkbook(name: string, rows: string[][]) {
   const xmlRows = rows
-    .map((row) => `<Row>${row.map((cell) => `<Cell><Data ss:Type=\"String\">${cell}</Data></Cell>`).join("")}</Row>`)
+    .map((row) => `<Row>${row.map((cell) => `<Cell><Data ss:Type="String">${cell}</Data></Cell>`).join("")}</Row>`)
     .join("");
   const content = `<?xml version="1.0"?>
   <Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
@@ -85,14 +133,33 @@ export function AdminDashboard() {
   const [claims, setClaims] = useState<Claim[]>([]);
   const [settings, setSettings] = useState<Settings>({ id: "default", lowStockDefault: 10, podPrice: 350 });
   const [globalSearch, setGlobalSearch] = useState("");
+
+  // Product Section States
+  const [selectedProductBrandId, setSelectedProductBrandId] = useState<string | null>(null);
+  const [isCreateBrandOpen, setIsCreateBrandOpen] = useState(false);
+  const [isAddFlavorOpen, setIsAddFlavorOpen] = useState(false);
+  const [productBrandSearch, setProductBrandSearch] = useState("");
+  const [productCategoryFilter, setProductCategoryFilter] = useState<"all" | PodCategory>("all");
+  const [productStatusFilter, setProductStatusFilter] = useState<"all" | ProductStatus>("all");
+  const [productFlavorSearch, setProductFlavorSearch] = useState("");
+
+  // Inventory Section States
+  const [selectedInventoryBrandId, setSelectedInventoryBrandId] = useState<string | null>(null);
+  const [inventoryBrandSearch, setInventoryBrandSearch] = useState("");
+  const [inventoryStockFilter, setInventoryStockFilter] = useState<"all" | "low-stock" | "out-of-stock" | "healthy">("all");
+  const [inventoryFlavorSearch, setInventoryFlavorSearch] = useState("");
+
+  // Forms and Modals States
   const [brandForm, setBrandForm] = useState({ name: "", category: "non-transparent" as PodCategory, status: "available" as ProductStatus, price: "", imageUrl: "" });
-  const [flavorForm, setFlavorForm] = useState({ brandId: "", name: "", stock: "", imageUrl: "", lowStockAlert: "" });
+  const [flavorForm, setFlavorForm] = useState({ brandId: "", name: "", stock: "1", imageUrl: "", lowStockAlert: "" });
   const [editingBrand, setEditingBrand] = useState<Brand | null>(null);
   const [editingFlavor, setEditingFlavor] = useState<Flavor | null>(null);
   const [brandUploading, setBrandUploading] = useState(false);
   const [flavorUploading, setFlavorUploading] = useState(false);
   const [editingBrandUploading, setEditingBrandUploading] = useState(false);
   const [editingFlavorUploading, setEditingFlavorUploading] = useState(false);
+
+  // Customer Management States
   const [customerName, setCustomerName] = useState("");
   const [editingCustomerId, setEditingCustomerId] = useState<string | null>(null);
   const [editingCustomerName, setEditingCustomerName] = useState("");
@@ -100,8 +167,17 @@ export function AdminDashboard() {
   const [editedCustomerItems, setEditedCustomerItems] = useState<PurchaseItem[]>([]);
   const [customerItemFlavorId, setCustomerItemFlavorId] = useState("");
   const [customerItemQuantity, setCustomerItemQuantity] = useState(1);
+
+  // Sales and Redemption States
   const [purchase, setPurchase] = useState({ customerId: "", brandId: "", flavorId: "", quantity: 1 });
   const [redeem, setRedeem] = useState({ customerId: "", brandId: "", flavorId: "" });
+
+  // Roulette (Spin Tickets & Odds) States
+  const [spinTickets, setSpinTickets] = useState<SpinTicket[]>([]);
+  const [selectedSpinCustomerId, setSelectedSpinCustomerId] = useState("");
+  const [generatingSpinTicket, setGeneratingSpinTicket] = useState(false);
+  const [newlyCreatedTicket, setNewlyCreatedTicket] = useState<SpinTicket | null>(null);
+  const [savingOdds, setSavingOdds] = useState(false);
 
   useEffect(() => {
     const unsubAuth = auth
@@ -122,6 +198,7 @@ export function AdminDashboard() {
       subscribeCustomers(setCustomers),
       subscribeSales(setSales),
       subscribeClaims(setClaims),
+      subscribeSpinTickets(setSpinTickets),
     ];
 
     getSettings().then(setSettings).catch(() => undefined);
@@ -138,7 +215,12 @@ export function AdminDashboard() {
   );
 
   const availableBrands = useMemo(
-    () => brands.filter((brand) => catalogFlavors.some((flavor) => flavor.brandId === brand.id && flavor.stock > 0)),
+    () =>
+      brands.filter(
+        (brand) =>
+          (brand.status ?? "available") === "available" &&
+          catalogFlavors.some((flavor) => flavor.brandId === brand.id && flavor.stock > 0)
+      ),
     [brands, catalogFlavors],
   );
 
@@ -215,14 +297,109 @@ export function AdminDashboard() {
     };
   }, [globalSearch, customers, brands, flavors]);
 
+  // Filtered Brands for Products Tab
+  const filteredProductBrands = useMemo(() => {
+    return brands
+      .filter((b) => {
+        const matchesSearch = b.name.toLowerCase().includes(productBrandSearch.toLowerCase().trim());
+        const matchesCategory = productCategoryFilter === "all" || b.category === productCategoryFilter;
+        const matchesStatus = productStatusFilter === "all" || (b.status ?? "available") === productStatusFilter;
+        return matchesSearch && matchesCategory && matchesStatus;
+      })
+      .sort((a, b) => productStatusRank(a.status) - productStatusRank(b.status) || a.name.localeCompare(b.name));
+  }, [brands, productBrandSearch, productCategoryFilter, productStatusFilter]);
+
+  // Selected Brand for Products Tab
+  const activeProductBrand = useMemo(() => {
+    if (!selectedProductBrandId) return null;
+    return brands.find((b) => b.id === selectedProductBrandId) ?? null;
+  }, [brands, selectedProductBrandId]);
+
+  // Selected Brand's Flavors for Products Tab
+  const activeProductBrandFlavors = useMemo(() => {
+    if (!selectedProductBrandId) return [];
+    return flavors
+      .filter((f) => f.brandId === selectedProductBrandId && f.name.toLowerCase().includes(productFlavorSearch.toLowerCase().trim()))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [flavors, selectedProductBrandId, productFlavorSearch]);
+
+  // Filtered Brands for Inventory Tab
+  const inventoryBrandStats = useMemo(() => {
+    return brands.map((brand) => {
+      const brandFlavors = flavors.filter((f) => f.brandId === brand.id);
+      const totalStock = brandFlavors.reduce((sum, f) => sum + f.stock, 0);
+      const outOfStockCount = brandFlavors.filter((f) => f.stock === 0).length;
+      const lowStockCount = brandFlavors.filter((f) => f.stock > 0 && f.stock <= (f.lowStockAlert || settings.lowStockDefault)).length;
+      const healthyCount = brandFlavors.filter((f) => f.stock > (f.lowStockAlert || settings.lowStockDefault)).length;
+
+      let healthStatus: "out-of-stock" | "low-stock" | "healthy" = "healthy";
+      if (outOfStockCount > 0) healthStatus = "out-of-stock";
+      else if (lowStockCount > 0) healthStatus = "low-stock";
+
+      return {
+        brand,
+        flavorsCount: brandFlavors.length,
+        totalStock,
+        outOfStockCount,
+        lowStockCount,
+        healthyCount,
+        healthStatus,
+      };
+    });
+  }, [brands, flavors, settings.lowStockDefault]);
+
+  const filteredInventoryBrands = useMemo(() => {
+    return inventoryBrandStats
+      .filter((stat) => {
+        const matchesSearch = stat.brand.name.toLowerCase().includes(inventoryBrandSearch.toLowerCase().trim());
+        const matchesFilter =
+          inventoryStockFilter === "all" ||
+          (inventoryStockFilter === "out-of-stock" && stat.outOfStockCount > 0) ||
+          (inventoryStockFilter === "low-stock" && (stat.lowStockCount > 0 || stat.outOfStockCount > 0)) ||
+          (inventoryStockFilter === "healthy" && stat.healthStatus === "healthy");
+        return matchesSearch && matchesFilter;
+      })
+      .sort((a, b) => {
+        const rankMap = { "out-of-stock": 0, "low-stock": 1, healthy: 2 };
+        const statusDiff = rankMap[a.healthStatus] - rankMap[b.healthStatus];
+        if (statusDiff !== 0) return statusDiff;
+        return a.brand.name.localeCompare(b.brand.name);
+      });
+  }, [inventoryBrandStats, inventoryBrandSearch, inventoryStockFilter]);
+
+  const activeInventoryBrandStat = useMemo(() => {
+    if (!selectedInventoryBrandId) return null;
+    return inventoryBrandStats.find((s) => s.brand.id === selectedInventoryBrandId) ?? null;
+  }, [inventoryBrandStats, selectedInventoryBrandId]);
+
+  const activeInventoryFlavors = useMemo(() => {
+    if (!selectedInventoryBrandId) return [];
+    return flavors
+      .filter((f) => f.brandId === selectedInventoryBrandId && f.name.toLowerCase().includes(inventoryFlavorSearch.toLowerCase().trim()))
+      .sort((a, b) => a.stock - b.stock || a.name.localeCompare(b.name));
+  }, [flavors, selectedInventoryBrandId, inventoryFlavorSearch]);
+
+  const inventorySummary = useMemo(() => {
+    const totalUnits = catalogFlavors.reduce((sum, f) => sum + f.stock, 0);
+    const lowStockTotal = catalogFlavors.filter((f) => f.stock > 0 && f.stock <= (f.lowStockAlert || settings.lowStockDefault)).length;
+    const outOfStockTotal = catalogFlavors.filter((f) => f.stock === 0).length;
+    return {
+      totalUnits,
+      lowStockTotal,
+      outOfStockTotal,
+      totalFlavors: catalogFlavors.length,
+      totalBrands: brands.length,
+    };
+  }, [catalogFlavors, settings.lowStockDefault, brands.length]);
+
   if (!ready) return <div className="grid min-h-screen place-items-center text-white">Checking admin access...</div>;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-black via-slate-950 to-indigo-950 text-white">
+    <div className="min-h-screen bg-gradient-to-br from-black via-neutral-950 to-red-950/30 text-white">
       {mobileMenuOpen && (
         <div className="fixed inset-0 z-50 lg:hidden">
           <button className="absolute inset-0 h-full w-full bg-black/70" aria-label="Close navigation menu" onClick={() => setMobileMenuOpen(false)} />
-          <aside className="relative h-full w-72 border-r border-white/10 bg-black p-4 shadow-2xl">
+          <aside className="relative h-full w-72 border-r border-white/10 bg-neutral-950 p-4 shadow-2xl">
             <div className="flex items-center justify-between">
               <Logo />
               <Button variant="outline" aria-label="Close navigation menu" onClick={() => setMobileMenuOpen(false)}>
@@ -233,7 +410,7 @@ export function AdminDashboard() {
               {sections.map((item) => (
                 <button
                   key={item}
-                  className={`w-full rounded-xl px-3 py-2 text-left text-sm ${active === item ? "bg-white/15" : "hover:bg-white/10"}`}
+                  className={`w-full rounded-xl px-3 py-2 text-left text-sm ${active === item ? "bg-red-600 text-white shadow-lg shadow-red-950/50 font-bold" : "text-neutral-400 hover:bg-neutral-900 hover:text-white"}`}
                   onClick={() => {
                     setActive(item);
                     setMobileMenuOpen(false);
@@ -247,13 +424,13 @@ export function AdminDashboard() {
         </div>
       )}
       <div className="flex">
-        <aside className="sticky top-0 hidden h-screen w-64 border-r border-white/10 bg-black/50 p-4 backdrop-blur lg:block">
+        <aside className="sticky top-0 hidden h-screen w-64 border-r border-white/10 bg-black/80 p-4 backdrop-blur lg:block">
           <Logo />
           <nav className="mt-6 space-y-2">
             {sections.map((item) => (
               <button
                 key={item}
-                className={`w-full rounded-xl px-3 py-2 text-left text-sm ${active === item ? "bg-white/15" : "hover:bg-white/10"}`}
+                className={`w-full rounded-xl px-3 py-2 text-left text-sm font-medium transition ${active === item ? "bg-red-600 text-white shadow-lg shadow-red-950/50 font-bold" : "text-neutral-400 hover:bg-neutral-900 hover:text-white"}`}
                 onClick={() => setActive(item)}
               >
                 {item}
@@ -270,8 +447,13 @@ export function AdminDashboard() {
               </Button>
               <Logo />
             </div>
-            <div className="flex gap-2">
-              <Input value={globalSearch} onChange={(e) => setGlobalSearch(e.target.value)} placeholder="Global search" />
+            <div className="flex flex-1 max-w-md items-center gap-2">
+              <div className="relative w-full">
+                <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-white/50" />
+                <Input value={globalSearch} onChange={(e) => setGlobalSearch(e.target.value)} placeholder="Global search..." className="pl-9" />
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
               <ThemeToggle />
               <Button variant="outline" onClick={() => (auth ? signOut(auth) : router.push("/"))}>
                 Logout
@@ -280,14 +462,28 @@ export function AdminDashboard() {
           </div>
 
           {globalSearch && (
-            <Card className="mb-6">
-              <p className="mb-2 text-sm font-semibold">Global search results</p>
-              <p className="text-sm">Customers: {searchResults.customers.map((c) => c.name).join(", ") || "None"}</p>
-              <p className="text-sm">Brands: {searchResults.brands.map((b) => b.name).join(", ") || "None"}</p>
-              <p className="text-sm">Flavors: {searchResults.flavors.map((f) => f.name).join(", ") || "None"}</p>
+            <Card className="mb-6 border-red-500/30 bg-neutral-900/80 p-4">
+              <p className="mb-2 text-sm font-semibold text-red-400">Global Search Results</p>
+              <div className="grid gap-2 text-sm md:grid-cols-3">
+                <div className="rounded-lg bg-black/30 p-2">
+                  <span className="font-medium text-white/70">Customers:</span>{" "}
+                  {searchResults.customers.map((c) => c.name).join(", ") || "None"}
+                </div>
+                <div className="rounded-lg bg-black/30 p-2">
+                  <span className="font-medium text-white/70">Brands:</span>{" "}
+                  {searchResults.brands.map((b) => b.name).join(", ") || "None"}
+                </div>
+                <div className="rounded-lg bg-black/30 p-2">
+                  <span className="font-medium text-white/70">Flavors:</span>{" "}
+                  {searchResults.flavors.map((f) => f.name).join(", ") || "None"}
+                </div>
+              </div>
             </Card>
           )}
 
+          {/* ========================================================================= */}
+          {/* DASHBOARD SECTION */}
+          {/* ========================================================================= */}
           {active === "Dashboard" && (
             <div className="space-y-6">
               <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -299,26 +495,28 @@ export function AdminDashboard() {
                   ["Free Pods Redeemed", `${dashboardCards.redeemed}`],
                   ["Low Stock Products", `${dashboardCards.lowStock}`],
                 ].map(([title, value]) => (
-                  <Card key={title}>
+                  <Card key={title} className="p-4 transition hover:border-white/20">
                     <p className="text-sm text-white/70">{title}</p>
-                    <p className="text-2xl font-bold">{value}</p>
+                    <p className="mt-1 text-2xl font-bold">{value}</p>
                   </Card>
                 ))}
               </div>
-              <Card>
+              <Card className="p-4">
                 <div className="mb-4 flex items-center justify-between gap-3">
-                  <h2 className="text-lg font-bold">Live Reward Tracker</h2>
-                  <p className="text-sm text-white/70">Updates as purchases and redemptions are recorded</p>
+                  <div>
+                    <h2 className="text-lg font-bold">Live Reward Tracker</h2>
+                    <p className="text-xs text-white/70">Updates as purchases and redemptions are recorded</p>
+                  </div>
                 </div>
                 <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                   {customers.map((customer) => {
                     const reward = computeRewardState(customer.totalPurchased, customer.totalRedeemed);
                     return (
-                      <div key={customer.id} className="rounded-xl border border-white/10 p-3">
+                      <div key={customer.id} className="rounded-xl border border-white/10 bg-black/30 p-3">
                         <p className="font-semibold">{customer.name}</p>
-                        <p className="mt-1 text-sm">{reward.progress}/10 pods toward the next reward</p>
-                        <Progress value={(reward.progress / 10) * 100} />
-                        <p className="mt-2 text-sm">Claimable free pods: {reward.claimable}</p>
+                        <p className="mt-1 text-xs text-white/70">{reward.progress}/10 pods toward the next reward</p>
+                        <Progress className="my-2" value={(reward.progress / 10) * 100} />
+                        <p className="text-xs text-red-400">Claimable free pods: {reward.claimable}</p>
                       </div>
                     );
                   })}
@@ -328,191 +526,1267 @@ export function AdminDashboard() {
             </div>
           )}
 
+          {/* ========================================================================= */}
+          {/* PRODUCTS SECTION (BRAND-FIRST DRILLDOWN ARCHITECTURE) */}
+          {/* ========================================================================= */}
           {active === "Products" && (
-            <div className="grid gap-6 xl:grid-cols-2">
-              <Card className="space-y-3">
-                <h3 className="text-lg font-bold">Create Brand</h3>
-                <Input placeholder="Brand name" value={brandForm.name} onChange={(e) => setBrandForm((s) => ({ ...s, name: e.target.value }))} />
-                <Input type="number" min={0} step="0.01" placeholder="Brand price" value={brandForm.price} onChange={(e) => setBrandForm((s) => ({ ...s, price: e.target.value }))} />
-                <select className="h-10 rounded-xl bg-white/5 px-3" value={brandForm.category} onChange={(e) => setBrandForm((s) => ({ ...s, category: e.target.value as PodCategory }))}>
-                  <option value="non-transparent">Non-Transparent</option>
-                  <option value="transparent">Transparent</option>
-                </select>
-                <select className="h-10 rounded-xl bg-white/5 px-3" aria-label="Brand availability" value={brandForm.status} onChange={(e) => setBrandForm((s) => ({ ...s, status: e.target.value as ProductStatus }))}>
-                  {Object.entries(PRODUCT_STATUS_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-                </select>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium" htmlFor="brand-image">Brand image</label>
-                  <Input id="brand-image" type="file" accept="image/*" disabled={brandUploading} onChange={async (e) => {
-                    const file = e.target.files?.[0];
-                    if (!file) return;
-                    setBrandUploading(true);
-                    try {
-                      const imageUrl = await uploadImage(file, "brands");
-                      setBrandForm((s) => ({ ...s, imageUrl }));
-                      toast.success("Brand image uploaded");
-                    } catch (error) {
-                      toast.error(error instanceof Error ? error.message : "Could not upload brand image.");
-                    } finally { setBrandUploading(false); e.target.value = ""; }
-                  }} />
-                  {brandUploading && <p className="text-sm text-white/70">Uploading image…</p>}
-                  {brandForm.imageUrl && <ProductImage src={brandForm.imageUrl} alt="Brand preview" className="h-32 w-full rounded-xl bg-black/20 object-contain" />}
-                </div>
-                <Button disabled={brandUploading || !brandForm.name.trim()} onClick={async () => {
-                  try {
-                    await createBrand({ ...brandForm, name: brandForm.name.trim(), price: Number(brandForm.price || settings.podPrice), imageUrl: brandForm.imageUrl || BRAND_PLACEHOLDER });
-                    setBrandForm({ name: "", category: "non-transparent", status: "available", price: "", imageUrl: "" });
-                    toast.success("Brand created");
-                  } catch (error) { toast.error(error instanceof Error ? error.message : "Could not create brand."); }
-                }}>Save Brand</Button>
-              </Card>
+            <div className="space-y-6">
+              {/* TOP LEVEL: ALL BRANDS OVERVIEW */}
+              {!selectedProductBrandId ? (
+                <>
+                  {/* Products Header & Quick Actions */}
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <h2 className="text-2xl font-bold">Products & Brand Catalog</h2>
+                      <p className="text-sm text-white/70">
+                        Select a brand to view flavors, edit settings, update prices, or add new flavors.
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button
+                        onClick={() => {
+                          setBrandForm({ name: "", category: "non-transparent", status: "available", price: "", imageUrl: "" });
+                          setIsCreateBrandOpen(true);
+                        }}
+                        className="flex items-center gap-2"
+                      >
+                        <Plus className="h-4 w-4" /> Create Brand
+                      </Button>
+                      <Button
+                        variant="outline"
+                        onClick={() => {
+                          setFlavorForm({ brandId: brands[0]?.id || "", name: "", stock: "", imageUrl: "", lowStockAlert: "" });
+                          setIsAddFlavorOpen(true);
+                        }}
+                        className="flex items-center gap-2"
+                      >
+                        <PackagePlus className="h-4 w-4" /> Add Flavor
+                      </Button>
+                    </div>
+                  </div>
 
-              <Card className="space-y-3">
-                <h3 className="text-lg font-bold">Add Flavor</h3>
-                <select className="h-10 rounded-xl bg-white/5 px-3" value={flavorForm.brandId} onChange={(e) => setFlavorForm((s) => ({ ...s, brandId: e.target.value }))}>
-                  <option value="">Select brand</option>
-                  {brands.map((brand) => <option key={brand.id} value={brand.id}>{brand.name}</option>)}
-                </select>
-                <Input placeholder="Flavor name" value={flavorForm.name} onChange={(e) => setFlavorForm((s) => ({ ...s, name: e.target.value }))} />
-                <Input type="number" min={0} placeholder="Starting stock" value={flavorForm.stock} onChange={(e) => setFlavorForm((s) => ({ ...s, stock: e.target.value }))} />
-                <Input type="number" min={1} placeholder="Low-stock alert threshold" value={flavorForm.lowStockAlert} onChange={(e) => setFlavorForm((s) => ({ ...s, lowStockAlert: e.target.value }))} />
-                <div className="space-y-2">
-                  <label className="text-sm font-medium" htmlFor="flavor-image">Flavor image</label>
-                  <Input id="flavor-image" type="file" accept="image/*" disabled={flavorUploading} onChange={async (e) => {
-                    const file = e.target.files?.[0];
-                    if (!file) return;
-                    setFlavorUploading(true);
-                    try {
-                      const imageUrl = await uploadImage(file, "flavors");
-                      setFlavorForm((s) => ({ ...s, imageUrl }));
-                      toast.success("Flavor image uploaded");
-                    } catch (error) {
-                      toast.error(error instanceof Error ? error.message : "Could not upload flavor image.");
-                    } finally { setFlavorUploading(false); e.target.value = ""; }
-                  }} />
-                  {flavorUploading && <p className="text-sm text-white/70">Uploading image…</p>}
-                  {flavorForm.imageUrl && <ProductImage src={flavorForm.imageUrl} alt="Flavor preview" fallback={FLAVOR_PLACEHOLDER} className="h-32 w-full rounded-xl bg-black/20 object-contain" />}
-                </div>
-                <Button disabled={flavorUploading || !flavorForm.brandId || !flavorForm.name.trim()} onClick={async () => {
-                  try {
-                    await createFlavor({ ...flavorForm, name: flavorForm.name.trim(), stock: Number(flavorForm.stock || 0), lowStockAlert: Number(flavorForm.lowStockAlert || settings.lowStockDefault), imageUrl: flavorForm.imageUrl || FLAVOR_PLACEHOLDER });
-                    setFlavorForm({ brandId: "", name: "", stock: "", imageUrl: "", lowStockAlert: "" });
-                    toast.success("Flavor added");
-                  } catch (error) { toast.error(error instanceof Error ? error.message : "Could not add flavor."); }
-                }}>Save Flavor</Button>
-              </Card>
+                  {/* Quick Stats Banner */}
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                    <div className="rounded-xl border border-white/10 bg-slate-900/40 p-3">
+                      <p className="text-xs text-white/60">Total Brands</p>
+                      <p className="text-xl font-bold text-white">{brands.length}</p>
+                    </div>
+                    <div className="rounded-xl border border-white/10 bg-slate-900/40 p-3">
+                      <p className="text-xs text-white/60">Total Flavors</p>
+                      <p className="text-xl font-bold text-red-400">{flavors.length}</p>
+                    </div>
+                    <div className="rounded-xl border border-white/10 bg-slate-900/40 p-3">
+                      <p className="text-xs text-white/60">Non-Transparent</p>
+                      <p className="text-xl font-bold text-white">{brands.filter((b) => b.category === "non-transparent").length}</p>
+                    </div>
+                    <div className="rounded-xl border border-white/10 bg-slate-900/40 p-3">
+                      <p className="text-xs text-white/60">Transparent</p>
+                      <p className="text-xl font-bold text-red-300">{brands.filter((b) => b.category === "transparent").length}</p>
+                    </div>
+                  </div>
 
-              <Card className="xl:col-span-2">
-                <h3 className="mb-3 text-lg font-bold">Manage Products</h3>
-                <div className="grid gap-3">
-                  {brands.slice().sort((a, b) => productStatusRank(a.status) - productStatusRank(b.status) || a.name.localeCompare(b.name)).map((brand) => (
-                    <div key={brand.id} className="rounded-xl border border-white/10 p-3">
-                      {editingBrand?.id === brand.id ? (
-                        <div className="grid gap-3 md:grid-cols-2">
-                          <Input value={editingBrand.name} aria-label="Brand name" onChange={(e) => setEditingBrand({ ...editingBrand, name: e.target.value })} />
-                          <Input type="number" min={0} step="0.01" value={editingBrand.price ?? ""} aria-label="Brand price" onChange={(e) => setEditingBrand({ ...editingBrand, price: Number(e.target.value) })} />
-                          <select className="h-10 rounded-xl bg-white/5 px-3" value={editingBrand.category} onChange={(e) => setEditingBrand({ ...editingBrand, category: e.target.value as PodCategory })}><option value="non-transparent">Non-Transparent</option><option value="transparent">Transparent</option></select>
-                          <select className="h-10 rounded-xl bg-white/5 px-3" aria-label="Brand availability" value={editingBrand.status ?? "available"} onChange={(e) => setEditingBrand({ ...editingBrand, status: e.target.value as ProductStatus })}>{Object.entries(PRODUCT_STATUS_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
-                          <div className="space-y-2">
-                            <Input type="file" accept="image/*" disabled={editingBrandUploading} onChange={async (e) => {
-                              const file = e.target.files?.[0]; if (!file) return; setEditingBrandUploading(true);
-                              try { setEditingBrand({ ...editingBrand, imageUrl: await uploadImage(file, "brands") }); toast.success("Brand image uploaded"); }
-                              catch (error) { toast.error(error instanceof Error ? error.message : "Could not upload brand image."); }
-                              finally { setEditingBrandUploading(false); e.target.value = ""; }
-                            }} />
-                            {editingBrandUploading && <p className="text-sm text-white/70">Uploading image…</p>}
+                  {/* Filter & Search Bar */}
+                  <Card className="flex flex-wrap items-center justify-between gap-3 p-3">
+                    <div className="relative min-w-[240px] flex-1">
+                      <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-white/50" />
+                      <Input
+                        value={productBrandSearch}
+                        onChange={(e) => setProductBrandSearch(e.target.value)}
+                        placeholder="Search brands by name..."
+                        className="pl-9"
+                      />
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div className="flex items-center gap-1.5 text-xs text-white/60">
+                        <Filter className="h-3.5 w-3.5" /> Filter:
+                      </div>
+                      <select
+                        className="h-10 rounded-xl border border-white/10 bg-white/5 px-3 text-sm text-white focus:outline-none"
+                        value={productCategoryFilter}
+                        onChange={(e) => setProductCategoryFilter(e.target.value as "all" | PodCategory)}
+                      >
+                        <option value="all">All Categories</option>
+                        <option value="non-transparent">Non-Transparent</option>
+                        <option value="transparent">Transparent</option>
+                      </select>
+                      <select
+                        className="h-10 rounded-xl border border-white/10 bg-white/5 px-3 text-sm text-white focus:outline-none"
+                        value={productStatusFilter}
+                        onChange={(e) => setProductStatusFilter(e.target.value as "all" | ProductStatus)}
+                      >
+                        <option value="all">All Statuses</option>
+                        {Object.entries(PRODUCT_STATUS_LABELS).map(([val, label]) => (
+                          <option key={val} value={val}>
+                            {label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </Card>
+
+                  {/* Brand Cards Grid */}
+                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                    {filteredProductBrands.map((brand) => {
+                      const brandFlavors = flavors.filter((f) => f.brandId === brand.id);
+                      const status = brand.status ?? "available";
+                      const statusBadgeColor =
+                        status === "available"
+                          ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/30"
+                          : status === "coming-soon"
+                            ? "bg-amber-500/20 text-amber-300 border-amber-500/30"
+                            : "bg-rose-500/20 text-rose-300 border-rose-500/30";
+
+                      return (
+                        <motion.div
+                          key={brand.id}
+                          whileHover={{ y: -4 }}
+                          className="group relative flex flex-col justify-between overflow-hidden rounded-2xl border border-white/10 bg-slate-900/50 p-4 shadow-lg backdrop-blur transition hover:border-red-500/40 hover:bg-slate-900/80"
+                        >
+                          <div>
+                            {/* Card Top Badges */}
+                            <div className="mb-3 flex items-center justify-between gap-2">
+                              <Badge className={statusBadgeColor}>{PRODUCT_STATUS_LABELS[status]}</Badge>
+                              <Badge className="border-white/15 bg-white/5 text-xs text-white/80">
+                                {brand.category === "transparent" ? "Transparent" : "Non-Transparent"}
+                              </Badge>
+                            </div>
+
+                            {/* Brand Image with hover zoom */}
+                            <div className="relative mb-3 flex h-40 w-full items-center justify-center overflow-hidden rounded-xl bg-black/40 p-2">
+                              <ProductImage
+                                src={brand.imageUrl}
+                                alt={brand.name}
+                                className="h-full w-full object-contain transition duration-300 group-hover:scale-105"
+                              />
+                            </div>
+
+                            {/* Brand Info */}
+                            <div className="space-y-1">
+                              <h3 className="text-lg font-bold text-white group-hover:text-red-400">{brand.name}</h3>
+                              <p className="text-sm font-medium text-emerald-400">{toCurrency(brand.price ?? settings.podPrice)}</p>
+                              <div className="flex items-center gap-1.5 text-xs text-white/60">
+                                <Boxes className="h-3.5 w-3.5 text-red-400" />
+                                <span>{brandFlavors.length} Flavor{brandFlavors.length === 1 ? "" : "s"}</span>
+                              </div>
+                            </div>
                           </div>
-                          <ProductImage src={editingBrand.imageUrl} alt="Brand preview" className="h-24 w-full rounded-xl bg-black/20 object-contain" />
-                          <div className="flex gap-2"><Button disabled={editingBrandUploading || !editingBrand.name.trim()} onClick={async () => {
-                            try { await updateBrand(brand.id, { name: editingBrand.name.trim(), price: editingBrand.price || settings.podPrice, category: editingBrand.category, status: editingBrand.status ?? "available", imageUrl: editingBrand.imageUrl || BRAND_PLACEHOLDER }); setEditingBrand(null); toast.success("Brand updated"); }
-                            catch (error) { toast.error(error instanceof Error ? error.message : "Could not update brand."); }
-                          }}>Save</Button><Button variant="outline" onClick={() => setEditingBrand(null)}>Cancel</Button></div>
+
+                          {/* Action Button */}
+                          <div className="mt-4 pt-3 border-t border-white/10 flex items-center gap-2">
+                            <Button
+                              onClick={() => {
+                                setSelectedProductBrandId(brand.id);
+                                setProductFlavorSearch("");
+                              }}
+                              className="w-full flex items-center justify-center gap-1.5 text-xs"
+                            >
+                              Manage Brand <ChevronRight className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
+                        </motion.div>
+                      );
+                    })}
+                  </div>
+
+                  {!filteredProductBrands.length && (
+                    <Card className="p-8 text-center">
+                      <Package className="mx-auto mb-3 h-10 w-10 text-white/40" />
+                      <p className="text-base font-semibold">No brands found</p>
+                      <p className="mt-1 text-sm text-white/60">
+                        {brands.length ? "Try clearing your search or filter options." : "Click '+ Create Brand' to add your first brand!"}
+                      </p>
+                    </Card>
+                  )}
+                </>
+              ) : (
+                /* DRILLDOWN LEVEL: SELECTED BRAND DETAILS & FLAVORS SETTINGS */
+                activeProductBrand && (
+                  <div className="space-y-6">
+                    {/* Navigation Breadcrumb */}
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <Button
+                        variant="outline"
+                        onClick={() => {
+                          setSelectedProductBrandId(null);
+                          setEditingBrand(null);
+                        }}
+                        className="flex items-center gap-2"
+                      >
+                        <ArrowLeft className="h-4 w-4" /> Back to All Brands
+                      </Button>
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          variant="outline"
+                          onClick={() => {
+                            setFlavorForm({ brandId: activeProductBrand.id, name: "", stock: "1", imageUrl: "", lowStockAlert: "" });
+                            setIsAddFlavorOpen(true);
+                          }}
+                          className="flex items-center gap-2"
+                        >
+                          <Plus className="h-4 w-4" /> Add Flavor to {activeProductBrand.name}
+                        </Button>
+                      </div>
+                    </div>
+
+                    {/* Brand Banner & Settings */}
+                    <Card className="border-red-500/20 bg-slate-900/70 p-6">
+                      {editingBrand?.id === activeProductBrand.id ? (
+                        /* Edit Brand Form */
+                        <div className="space-y-4">
+                          <div className="flex items-center justify-between">
+                            <h3 className="text-lg font-bold text-red-400">Edit Brand Settings</h3>
+                            <Button variant="ghost" onClick={() => setEditingBrand(null)}>
+                              <X className="h-4 w-4" />
+                            </Button>
+                          </div>
+                          <div className="grid gap-4 md:grid-cols-2">
+                            <div>
+                              <label className="mb-1 block text-xs font-medium text-white/70">Brand Name</label>
+                              <Input
+                                value={editingBrand.name}
+                                onChange={(e) => setEditingBrand({ ...editingBrand, name: e.target.value })}
+                                placeholder="Brand Name"
+                              />
+                            </div>
+                            <div>
+                              <label className="mb-1 block text-xs font-medium text-white/70">Price (₱)</label>
+                              <Input
+                                type="number"
+                                min={0}
+                                step="0.01"
+                                value={editingBrand.price ?? ""}
+                                onChange={(e) => setEditingBrand({ ...editingBrand, price: Number(e.target.value) })}
+                                placeholder="Price"
+                              />
+                            </div>
+                            <div>
+                              <label className="mb-1 block text-xs font-medium text-white/70">Category</label>
+                              <select
+                                className="h-10 w-full rounded-xl border border-white/10 bg-white/5 px-3 text-sm"
+                                value={editingBrand.category}
+                                onChange={(e) => setEditingBrand({ ...editingBrand, category: e.target.value as PodCategory })}
+                              >
+                                <option value="non-transparent">Non-Transparent</option>
+                                <option value="transparent">Transparent</option>
+                              </select>
+                            </div>
+                            <div>
+                              <label className="mb-1 block text-xs font-medium text-white/70">Availability Status</label>
+                              <select
+                                className="h-10 w-full rounded-xl border border-white/10 bg-white/5 px-3 text-sm"
+                                value={editingBrand.status ?? "available"}
+                                onChange={(e) => setEditingBrand({ ...editingBrand, status: e.target.value as ProductStatus })}
+                              >
+                                {Object.entries(PRODUCT_STATUS_LABELS).map(([value, label]) => (
+                                  <option key={value} value={value}>
+                                    {label}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                            <div className="space-y-2 md:col-span-2">
+                              <label className="block text-xs font-medium text-white/70">Brand Image</label>
+                              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                                <div className="h-24 w-24 shrink-0 overflow-hidden rounded-xl border border-white/10 bg-black/40 p-2">
+                                  <ProductImage src={editingBrand.imageUrl} alt="Brand Preview" className="h-full w-full object-contain" />
+                                </div>
+                                <div className="flex-1 space-y-1">
+                                  <Input
+                                    type="file"
+                                    accept="image/*"
+                                    disabled={editingBrandUploading}
+                                    onChange={async (e) => {
+                                      const file = e.target.files?.[0];
+                                      if (!file) return;
+                                      setEditingBrandUploading(true);
+                                      try {
+                                        const imageUrl = await uploadImage(file, "brands");
+                                        setEditingBrand({ ...editingBrand, imageUrl });
+                                        toast.success("Brand image uploaded");
+                                      } catch (error) {
+                                        toast.error(error instanceof Error ? error.message : "Could not upload image");
+                                      } finally {
+                                        setEditingBrandUploading(false);
+                                        e.target.value = "";
+                                      }
+                                    }}
+                                  />
+                                  {editingBrandUploading && <p className="text-xs text-red-400">Uploading new image…</p>}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                          <div className="flex gap-2 pt-2">
+                            <Button
+                              disabled={editingBrandUploading || !editingBrand.name.trim()}
+                              onClick={async () => {
+                                try {
+                                  await updateBrand(activeProductBrand.id, {
+                                    name: editingBrand.name.trim(),
+                                    price: editingBrand.price || settings.podPrice,
+                                    category: editingBrand.category,
+                                    status: editingBrand.status ?? "available",
+                                    imageUrl: editingBrand.imageUrl || BRAND_PLACEHOLDER,
+                                  });
+                                  setEditingBrand(null);
+                                  toast.success("Brand settings saved");
+                                } catch (error) {
+                                  toast.error(error instanceof Error ? error.message : "Could not update brand");
+                                }
+                              }}
+                            >
+                              Save Brand Settings
+                            </Button>
+                            <Button variant="outline" onClick={() => setEditingBrand(null)}>
+                              Cancel
+                            </Button>
+                          </div>
                         </div>
                       ) : (
-                        <div className="flex flex-wrap items-center justify-between gap-2"><div><p className="font-semibold">{brand.name} <span className={`ml-2 inline-block rounded-full px-2 py-0.5 text-xs ${(brand.status ?? "available") === "available" ? "bg-emerald-500/20 text-emerald-300" : (brand.status ?? "available") === "coming-soon" ? "bg-amber-500/20 text-amber-300" : "bg-red-500/20 text-red-300"}`}>{PRODUCT_STATUS_LABELS[brand.status ?? "available"]}</span></p><p className="text-sm text-white/70">{brand.category} · {toCurrency(brand.price ?? settings.podPrice)}</p></div><div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => setEditingBrand(brand)}>Edit</Button><Button variant="outline" onClick={async () => { try { const category = brand.category === "transparent" ? "non-transparent" : "transparent"; await updateBrand(brand.id, { category }); toast.success(`Moved to ${category}`); } catch (error) { toast.error(error instanceof Error ? error.message : "Could not change category."); } }}>Toggle Category</Button><Button variant="danger" onClick={async () => { try { await deleteBrand(brand.id); toast.success("Brand deleted"); } catch (error) { toast.error(error instanceof Error ? error.message : "Could not delete brand."); } }}>Delete</Button></div></div>
+                        /* Brand Overview View */
+                        <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
+                          <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+                            <div className="h-28 w-28 shrink-0 overflow-hidden rounded-2xl border border-white/10 bg-black/40 p-2 shadow-inner">
+                              <ProductImage src={activeProductBrand.imageUrl} alt={activeProductBrand.name} className="h-full w-full object-contain" />
+                            </div>
+                            <div className="space-y-1">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <h2 className="text-2xl font-bold">{activeProductBrand.name}</h2>
+                                <Badge
+                                  className={
+                                    (activeProductBrand.status ?? "available") === "available"
+                                      ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/30"
+                                      : (activeProductBrand.status ?? "available") === "coming-soon"
+                                        ? "bg-amber-500/20 text-amber-300 border-amber-500/30"
+                                        : "bg-rose-500/20 text-rose-300 border-rose-500/30"
+                                  }
+                                >
+                                  {PRODUCT_STATUS_LABELS[activeProductBrand.status ?? "available"]}
+                                </Badge>
+                                <Badge className="border-white/15 bg-white/5 text-white/80">
+                                  {activeProductBrand.category === "transparent" ? "Transparent" : "Non-Transparent"}
+                                </Badge>
+                              </div>
+                              <p className="text-lg font-semibold text-emerald-400">
+                                Price: {toCurrency(activeProductBrand.price ?? settings.podPrice)}
+                              </p>
+                              <p className="text-xs text-white/60">
+                                {activeProductBrandFlavors.length} Flavor{activeProductBrandFlavors.length === 1 ? "" : "s"} listed for this brand
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="flex flex-wrap gap-2">
+                            <Button variant="outline" onClick={() => setEditingBrand(activeProductBrand)} className="flex items-center gap-1.5">
+                              <Edit2 className="h-4 w-4" /> Edit Brand
+                            </Button>
+                            <Button
+                              variant="outline"
+                              onClick={async () => {
+                                try {
+                                  const category = activeProductBrand.category === "transparent" ? "non-transparent" : "transparent";
+                                  await updateBrand(activeProductBrand.id, { category });
+                                  toast.success(`Moved brand to ${category}`);
+                                } catch (error) {
+                                  toast.error(error instanceof Error ? error.message : "Could not change category");
+                                }
+                              }}
+                            >
+                              Toggle Category
+                            </Button>
+                            <Button
+                              variant="danger"
+                              onClick={async () => {
+                                if (confirm(`Are you sure you want to delete ${activeProductBrand.name} and all its flavors?`)) {
+                                  try {
+                                    await deleteBrand(activeProductBrand.id);
+                                    setSelectedProductBrandId(null);
+                                    toast.success("Brand and its flavors deleted");
+                                  } catch (error) {
+                                    toast.error(error instanceof Error ? error.message : "Could not delete brand");
+                                  }
+                                }
+                              }}
+                              className="flex items-center gap-1.5"
+                            >
+                              <Trash2 className="h-4 w-4" /> Delete Brand
+                            </Button>
+                          </div>
+                        </div>
                       )}
-                      <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                        {flavors.filter((f) => f.brandId === brand.id).map((flavor) => (
-                          <div key={flavor.id} className="rounded-lg border border-white/10 p-2 text-sm">
-                            {editingFlavor?.id === flavor.id ? <div className="space-y-2"><Input value={editingFlavor.name} aria-label="Flavor name" onChange={(e) => setEditingFlavor({ ...editingFlavor, name: e.target.value })} /><Input type="number" min={0} value={editingFlavor.stock} aria-label="Flavor stock" onChange={(e) => setEditingFlavor({ ...editingFlavor, stock: Number(e.target.value) })} /><Input type="number" min={1} value={editingFlavor.lowStockAlert} aria-label="Low stock alert" onChange={(e) => setEditingFlavor({ ...editingFlavor, lowStockAlert: Number(e.target.value) })} /><Input type="file" accept="image/*" disabled={editingFlavorUploading} onChange={async (e) => { const file = e.target.files?.[0]; if (!file) return; setEditingFlavorUploading(true); try { setEditingFlavor({ ...editingFlavor, imageUrl: await uploadImage(file, "flavors") }); toast.success("Flavor image uploaded"); } catch (error) { toast.error(error instanceof Error ? error.message : "Could not upload flavor image."); } finally { setEditingFlavorUploading(false); e.target.value = ""; } }} />{editingFlavorUploading && <p className="text-white/70">Uploading image…</p>}<ProductImage src={editingFlavor.imageUrl} alt="Flavor preview" fallback={FLAVOR_PLACEHOLDER} className="h-20 w-full rounded-lg bg-black/20 object-contain" /><div className="flex gap-2"><Button disabled={editingFlavorUploading || !editingFlavor.name.trim()} onClick={async () => { try { await updateFlavor(flavor.id, { name: editingFlavor.name.trim(), stock: editingFlavor.stock, lowStockAlert: editingFlavor.lowStockAlert, imageUrl: editingFlavor.imageUrl || FLAVOR_PLACEHOLDER }); setEditingFlavor(null); toast.success("Flavor updated"); } catch (error) { toast.error(error instanceof Error ? error.message : "Could not update flavor."); } }}>Save</Button><Button variant="outline" onClick={() => setEditingFlavor(null)}>Cancel</Button></div></div> : <><p className="font-semibold">{flavor.name}</p><p>Stock: {flavor.stock}</p><div className="mt-2 flex flex-wrap gap-2"><Button variant="outline" onClick={() => setEditingFlavor(flavor)}>Edit</Button><Button variant="outline" onClick={async () => { try { await updateFlavor(flavor.id, { stock: flavor.stock + 1 }); } catch (error) { toast.error(error instanceof Error ? error.message : "Could not update stock."); } }}>+1</Button><Button variant="outline" onClick={async () => { try { await updateFlavor(flavor.id, { stock: Math.max(0, flavor.stock - 1) }); } catch (error) { toast.error(error instanceof Error ? error.message : "Could not update stock."); } }}>-1</Button><Button variant="danger" onClick={async () => { try { await deleteFlavor(flavor.id); toast.success("Flavor deleted"); } catch (error) { toast.error(error instanceof Error ? error.message : "Could not delete flavor."); } }}>Delete</Button></div></>}
+                    </Card>
+
+                    {/* Flavors Section for Selected Brand */}
+                    <div className="space-y-4">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="flex items-center gap-2">
+                          <Boxes className="h-5 w-5 text-red-400" />
+                          <h3 className="text-xl font-bold">Flavors of {activeProductBrand.name}</h3>
+                          <Badge className="ml-1 bg-red-500/20 text-red-200 border-red-500/30">
+                            {activeProductBrandFlavors.length}
+                          </Badge>
+                        </div>
+                        <div className="relative min-w-[220px]">
+                          <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-white/50" />
+                          <Input
+                            value={productFlavorSearch}
+                            onChange={(e) => setProductFlavorSearch(e.target.value)}
+                            placeholder="Filter flavors..."
+                            className="pl-9 text-sm"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Flavors Grid */}
+                      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                        {activeProductBrandFlavors.map((flavor) => (
+                          <div
+                            key={flavor.id}
+                            className="flex flex-col justify-between rounded-xl border border-white/10 bg-slate-900/50 p-3 shadow backdrop-blur transition hover:border-white/20"
+                          >
+                            {editingFlavor?.id === flavor.id ? (
+                              /* Flavor Inline Editor */
+                              <div className="space-y-2">
+                                <div className="flex items-center justify-between">
+                                  <p className="text-xs font-bold text-red-400">Edit Flavor</p>
+                                  <Button variant="ghost" className="h-6 w-6 p-0" onClick={() => setEditingFlavor(null)}>
+                                    <X className="h-3.5 w-3.5" />
+                                  </Button>
+                                </div>
+                                <div>
+                                  <label className="text-xs text-white/70">Flavor Name</label>
+                                  <Input
+                                    value={editingFlavor.name}
+                                    onChange={(e) => setEditingFlavor({ ...editingFlavor, name: e.target.value })}
+                                  />
+                                </div>
+                                <div className="grid grid-cols-2 gap-2">
+                                  <div>
+                                    <label className="text-xs text-white/70">Stock</label>
+                                    <Input
+                                      type="number"
+                                      min={0}
+                                      value={editingFlavor.stock}
+                                      onChange={(e) => setEditingFlavor({ ...editingFlavor, stock: Number(e.target.value) })}
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="text-xs text-white/70">Low Alert</label>
+                                    <Input
+                                      type="number"
+                                      min={1}
+                                      value={editingFlavor.lowStockAlert}
+                                      onChange={(e) => setEditingFlavor({ ...editingFlavor, lowStockAlert: Number(e.target.value) })}
+                                    />
+                                  </div>
+                                </div>
+                                <div>
+                                  <label className="text-xs text-white/70">Replace Image</label>
+                                  <Input
+                                    type="file"
+                                    accept="image/*"
+                                    disabled={editingFlavorUploading}
+                                    onChange={async (e) => {
+                                      const file = e.target.files?.[0];
+                                      if (!file) return;
+                                      setEditingFlavorUploading(true);
+                                      try {
+                                        const imageUrl = await uploadImage(file, "flavors");
+                                        setEditingFlavor({ ...editingFlavor, imageUrl });
+                                        toast.success("Flavor image uploaded");
+                                      } catch (error) {
+                                        toast.error(error instanceof Error ? error.message : "Could not upload flavor image");
+                                      } finally {
+                                        setEditingFlavorUploading(false);
+                                        e.target.value = "";
+                                      }
+                                    }}
+                                  />
+                                </div>
+                                <ProductImage
+                                  src={editingFlavor.imageUrl}
+                                  alt="Flavor Preview"
+                                  fallback={FLAVOR_PLACEHOLDER}
+                                  className="h-20 w-full rounded-lg bg-black/20 object-contain"
+                                />
+                                <div className="flex gap-2 pt-1">
+                                  <Button
+                                    disabled={editingFlavorUploading || !editingFlavor.name.trim()}
+                                    onClick={async () => {
+                                      try {
+                                        await updateFlavor(flavor.id, {
+                                          name: editingFlavor.name.trim(),
+                                          stock: editingFlavor.stock,
+                                          lowStockAlert: editingFlavor.lowStockAlert,
+                                          imageUrl: editingFlavor.imageUrl || FLAVOR_PLACEHOLDER,
+                                        });
+                                        setEditingFlavor(null);
+                                        toast.success("Flavor updated");
+                                      } catch (error) {
+                                        toast.error(error instanceof Error ? error.message : "Could not update flavor");
+                                      }
+                                    }}
+                                    className="flex-1 text-xs"
+                                  >
+                                    Save
+                                  </Button>
+                                  <Button variant="outline" onClick={() => setEditingFlavor(null)} className="text-xs">
+                                    Cancel
+                                  </Button>
+                                </div>
+                              </div>
+                            ) : (
+                              /* Flavor Regular Card */
+                              <>
+                                <div>
+                                  <div className="mb-2 flex items-center justify-between gap-2">
+                                    <h4 className="font-semibold text-white truncate">{flavor.name}</h4>
+                                    <span
+                                      className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold ${
+                                        flavor.stock === 0
+                                          ? "bg-rose-500/80 text-white"
+                                          : flavor.stock <= (flavor.lowStockAlert || settings.lowStockDefault)
+                                            ? "bg-amber-500/80 text-white"
+                                            : "bg-emerald-500/80 text-white"
+                                      }`}
+                                    >
+                                      {flavor.stock} in stock
+                                    </span>
+                                  </div>
+                                  <p className="text-xs text-white/60">
+                                    Alert threshold: {flavor.lowStockAlert || settings.lowStockDefault}
+                                  </p>
+                                </div>
+
+                                <div className="mt-3 space-y-2 border-t border-white/10 pt-2">
+                                  {/* Quick Stock Controls */}
+                                  <div className="flex items-center justify-between gap-1">
+                                    <span className="text-xs text-white/50">Quick adjust:</span>
+                                    <div className="flex gap-1">
+                                      <Button
+                                        variant="outline"
+                                        className="h-7 px-2 text-xs"
+                                        onClick={async () => {
+                                          try {
+                                            await updateFlavor(flavor.id, { stock: Math.max(0, flavor.stock - 1) });
+                                          } catch (error) {
+                                            toast.error("Could not update stock");
+                                          }
+                                        }}
+                                      >
+                                        -1
+                                      </Button>
+                                      <Button
+                                        variant="outline"
+                                        className="h-7 px-2 text-xs"
+                                        onClick={async () => {
+                                          try {
+                                            await updateFlavor(flavor.id, { stock: flavor.stock + 1 });
+                                          } catch (error) {
+                                            toast.error("Could not update stock");
+                                          }
+                                        }}
+                                      >
+                                        +1
+                                      </Button>
+                                    </div>
+                                  </div>
+
+                                  {/* Edit & Delete Action Buttons */}
+                                  <div className="flex items-center gap-1.5 pt-1">
+                                    <Button
+                                      variant="outline"
+                                      onClick={() => setEditingFlavor(flavor)}
+                                      className="flex-1 flex items-center justify-center gap-1 text-xs"
+                                    >
+                                      <Edit2 className="h-3 w-3" /> Edit
+                                    </Button>
+                                    <Button
+                                      variant="danger"
+                                      onClick={async () => {
+                                        if (confirm(`Delete flavor "${flavor.name}"?`)) {
+                                          try {
+                                            await deleteFlavor(flavor.id);
+                                            toast.success("Flavor deleted");
+                                          } catch (error) {
+                                            toast.error("Could not delete flavor");
+                                          }
+                                        }
+                                      }}
+                                      className="h-8 px-2 text-xs"
+                                    >
+                                      <Trash2 className="h-3.5 w-3.5" />
+                                    </Button>
+                                  </div>
+                                </div>
+                              </>
+                            )}
                           </div>
                         ))}
                       </div>
-                    </div>
-                  ))}
-                </div>
-              </Card>
-            </div>
-          )}
 
-          {active === "Inventory" && (
-            <div className="grid gap-4 lg:grid-cols-2">
-              {brands.map((brand) => {
-                const brandFlavors = catalogFlavors.filter((flavor) => flavor.brandId === brand.id);
-                if (!brandFlavors.length) return null;
-                return (
-                  <Card key={brand.id} className="p-3">
-                    <h3 className="mb-3 font-bold">{brand.name}</h3>
-                    <div className="grid gap-2 sm:grid-cols-2">
-                      {brandFlavors.map((flavor) => (
-                        <div key={flavor.id} className="rounded-xl border border-white/10 p-2 text-sm">
-                          <p className="font-semibold">{flavor.name}</p>
-                          <p>Stock: {flavor.stock}</p>
-                          <p className={`${flavor.stock <= (flavor.lowStockAlert || settings.lowStockDefault) ? "text-amber-300" : "text-white/70"}`}>
-                            Alert: {flavor.lowStockAlert || settings.lowStockDefault}
+                      {!activeProductBrandFlavors.length && (
+                        <Card className="p-8 text-center">
+                          <Boxes className="mx-auto mb-2 h-8 w-8 text-white/40" />
+                          <p className="font-semibold">No flavors found for {activeProductBrand.name}</p>
+                          <p className="mt-1 text-xs text-white/60">
+                            Click &quot;Add Flavor to {activeProductBrand.name}&quot; above to create new flavors!
                           </p>
-                          <div className="mt-2 flex gap-1">
-                            <Button variant="outline" onClick={() => updateFlavor(flavor.id, { stock: flavor.stock + 5 })}>+5</Button>
-                            <Button variant="outline" onClick={() => updateFlavor(flavor.id, { lowStockAlert: (flavor.lowStockAlert || settings.lowStockDefault) + 1 })}>Alert +1</Button>
+                        </Card>
+                      )}
+                    </div>
+                  </div>
+                )
+              )}
+
+              {/* MODAL: CREATE NEW BRAND */}
+              <AnimatePresence>
+                {isCreateBrandOpen && (
+                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
+                    <motion.div
+                      initial={{ opacity: 0, scale: 0.95 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.95 }}
+                      className="w-full max-w-lg rounded-2xl border border-white/15 bg-slate-900 p-6 shadow-2xl"
+                    >
+                      <div className="mb-4 flex items-center justify-between">
+                        <h3 className="text-xl font-bold text-white flex items-center gap-2">
+                          <Sparkles className="h-5 w-5 text-red-400" /> Create New Brand
+                        </h3>
+                        <Button variant="ghost" className="h-8 w-8 p-0" onClick={() => setIsCreateBrandOpen(false)}>
+                          <X className="h-4 w-4" />
+                        </Button>
+                      </div>
+
+                      <div className="space-y-4">
+                        <div>
+                          <label className="mb-1 block text-xs font-medium text-white/70">Brand Name</label>
+                          <Input
+                            placeholder="e.g. Relx Infinity, Shift Pods..."
+                            value={brandForm.name}
+                            onChange={(e) => setBrandForm((s) => ({ ...s, name: e.target.value }))}
+                          />
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className="mb-1 block text-xs font-medium text-white/70">Price (₱)</label>
+                            <Input
+                              type="number"
+                              min={0}
+                              step="0.01"
+                              placeholder={`Default: ₱${settings.podPrice}`}
+                              value={brandForm.price}
+                              onChange={(e) => setBrandForm((s) => ({ ...s, price: e.target.value }))}
+                            />
+                          </div>
+                          <div>
+                            <label className="mb-1 block text-xs font-medium text-white/70">Category</label>
+                            <select
+                              className="h-10 w-full rounded-xl border border-white/10 bg-white/5 px-3 text-sm"
+                              value={brandForm.category}
+                              onChange={(e) => setBrandForm((s) => ({ ...s, category: e.target.value as PodCategory }))}
+                            >
+                              <option value="non-transparent">Non-Transparent</option>
+                              <option value="transparent">Transparent</option>
+                            </select>
                           </div>
                         </div>
-                      ))}
-                    </div>
-                  </Card>
-                );
-              })}
-              {!catalogFlavors.length && <p className="text-sm text-white/70">No inventory products yet.</p>}
+                        <div>
+                          <label className="mb-1 block text-xs font-medium text-white/70">Availability Status</label>
+                          <select
+                            className="h-10 w-full rounded-xl border border-white/10 bg-white/5 px-3 text-sm"
+                            value={brandForm.status}
+                            onChange={(e) => setBrandForm((s) => ({ ...s, status: e.target.value as ProductStatus }))}
+                          >
+                            {Object.entries(PRODUCT_STATUS_LABELS).map(([value, label]) => (
+                              <option key={value} value={value}>
+                                {label}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="space-y-2">
+                          <label className="block text-xs font-medium text-white/70">Brand Image</label>
+                          <Input
+                            type="file"
+                            accept="image/*"
+                            disabled={brandUploading}
+                            onChange={async (e) => {
+                              const file = e.target.files?.[0];
+                              if (!file) return;
+                              setBrandUploading(true);
+                              try {
+                                const imageUrl = await uploadImage(file, "brands");
+                                setBrandForm((s) => ({ ...s, imageUrl }));
+                                toast.success("Brand image uploaded");
+                              } catch (error) {
+                                toast.error(error instanceof Error ? error.message : "Could not upload brand image.");
+                              } finally {
+                                setBrandUploading(false);
+                                e.target.value = "";
+                              }
+                            }}
+                          />
+                          {brandUploading && <p className="text-xs text-red-400">Uploading brand image…</p>}
+                          {brandForm.imageUrl && (
+                            <ProductImage
+                              src={brandForm.imageUrl}
+                              alt="Brand preview"
+                              className="h-28 w-full rounded-xl bg-black/40 object-contain p-2"
+                            />
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="mt-6 flex justify-end gap-2">
+                        <Button variant="outline" onClick={() => setIsCreateBrandOpen(false)}>
+                          Cancel
+                        </Button>
+                        <Button
+                          disabled={brandUploading || !brandForm.name.trim()}
+                          onClick={async () => {
+                            try {
+                              await createBrand({
+                                ...brandForm,
+                                name: brandForm.name.trim(),
+                                price: Number(brandForm.price || settings.podPrice),
+                                imageUrl: brandForm.imageUrl || BRAND_PLACEHOLDER,
+                              });
+                              setBrandForm({ name: "", category: "non-transparent", status: "available", price: "", imageUrl: "" });
+                              setIsCreateBrandOpen(false);
+                              toast.success("Brand created successfully");
+                            } catch (error) {
+                              toast.error(error instanceof Error ? error.message : "Could not create brand.");
+                            }
+                          }}
+                        >
+                          Save Brand
+                        </Button>
+                      </div>
+                    </motion.div>
+                  </div>
+                )}
+              </AnimatePresence>
+
+              {/* MODAL: ADD FLAVOR */}
+              <AnimatePresence>
+                {isAddFlavorOpen && (
+                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
+                    <motion.div
+                      initial={{ opacity: 0, scale: 0.95 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.95 }}
+                      className="w-full max-w-lg rounded-2xl border border-white/15 bg-slate-900 p-6 shadow-2xl"
+                    >
+                      <div className="mb-4 flex items-center justify-between">
+                        <h3 className="text-xl font-bold text-white flex items-center gap-2">
+                          <PackagePlus className="h-5 w-5 text-red-400" /> Add New Flavor
+                        </h3>
+                        <Button variant="ghost" className="h-8 w-8 p-0" onClick={() => setIsAddFlavorOpen(false)}>
+                          <X className="h-4 w-4" />
+                        </Button>
+                      </div>
+
+                      <div className="space-y-4">
+                        <div>
+                          <label className="mb-1 block text-xs font-medium text-white/70">Select Brand</label>
+                          <select
+                            className="h-10 w-full rounded-xl border border-white/10 bg-white/5 px-3 text-sm"
+                            value={flavorForm.brandId}
+                            onChange={(e) => setFlavorForm((s) => ({ ...s, brandId: e.target.value }))}
+                          >
+                            <option value="">-- Choose Brand --</option>
+                            {brands.map((brand) => (
+                              <option key={brand.id} value={brand.id}>
+                                {brand.name}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="mb-1 block text-xs font-medium text-white/70">Flavor Name</label>
+                          <Input
+                            placeholder="e.g. Watermelon Chill, Fresh Taro..."
+                            value={flavorForm.name}
+                            onChange={(e) => setFlavorForm((s) => ({ ...s, name: e.target.value }))}
+                          />
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className="mb-1 block text-xs font-medium text-white/70">Starting Stock</label>
+                            <Input
+                              type="number"
+                              min={0}
+                              placeholder="1"
+                              value={flavorForm.stock}
+                              onChange={(e) => setFlavorForm((s) => ({ ...s, stock: e.target.value }))}
+                            />
+                          </div>
+                          <div>
+                            <label className="mb-1 block text-xs font-medium text-white/70">Low Stock Alert</label>
+                            <Input
+                              type="number"
+                              min={1}
+                              placeholder={`Default: ${settings.lowStockDefault}`}
+                              value={flavorForm.lowStockAlert}
+                              onChange={(e) => setFlavorForm((s) => ({ ...s, lowStockAlert: e.target.value }))}
+                            />
+                          </div>
+                        </div>
+                        <div className="space-y-2">
+                          <label className="block text-xs font-medium text-white/70">Flavor Image</label>
+                          <Input
+                            type="file"
+                            accept="image/*"
+                            disabled={flavorUploading}
+                            onChange={async (e) => {
+                              const file = e.target.files?.[0];
+                              if (!file) return;
+                              setFlavorUploading(true);
+                              try {
+                                const imageUrl = await uploadImage(file, "flavors");
+                                setFlavorForm((s) => ({ ...s, imageUrl }));
+                                toast.success("Flavor image uploaded");
+                              } catch (error) {
+                                toast.error(error instanceof Error ? error.message : "Could not upload flavor image.");
+                              } finally {
+                                setFlavorUploading(false);
+                                e.target.value = "";
+                              }
+                            }}
+                          />
+                          {flavorUploading && <p className="text-xs text-red-400">Uploading flavor image…</p>}
+                          {flavorForm.imageUrl && (
+                            <ProductImage
+                              src={flavorForm.imageUrl}
+                              alt="Flavor preview"
+                              fallback={FLAVOR_PLACEHOLDER}
+                              className="h-24 w-full rounded-xl bg-black/40 object-contain p-2"
+                            />
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="mt-6 flex justify-end gap-2">
+                        <Button variant="outline" onClick={() => setIsAddFlavorOpen(false)}>
+                          Cancel
+                        </Button>
+                        <Button
+                          disabled={flavorUploading || !flavorForm.brandId || !flavorForm.name.trim()}
+                          onClick={async () => {
+                            try {
+                              await createFlavor({
+                                ...flavorForm,
+                                name: flavorForm.name.trim(),
+                                stock: Number(flavorForm.stock || 1),
+                                lowStockAlert: Number(flavorForm.lowStockAlert || settings.lowStockDefault),
+                                imageUrl: flavorForm.imageUrl || FLAVOR_PLACEHOLDER,
+                              });
+                              setFlavorForm({ brandId: "", name: "", stock: "1", imageUrl: "", lowStockAlert: "" });
+                              setIsAddFlavorOpen(false);
+                              toast.success("Flavor created successfully");
+                            } catch (error) {
+                              toast.error(error instanceof Error ? error.message : "Could not add flavor.");
+                            }
+                          }}
+                        >
+                          Save Flavor
+                        </Button>
+                      </div>
+                    </motion.div>
+                  </div>
+                )}
+              </AnimatePresence>
             </div>
           )}
 
+          {/* ========================================================================= */}
+          {/* INVENTORY SECTION (BRAND-FIRST STOCK DRILLDOWN ARCHITECTURE) */}
+          {/* ========================================================================= */}
+          {active === "Inventory" && (
+            <div className="space-y-6">
+              {/* TOP LEVEL: ALL BRANDS INVENTORY OVERVIEW */}
+              {!selectedInventoryBrandId ? (
+                <>
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <h2 className="text-2xl font-bold">Inventory & Stock Management</h2>
+                      <p className="text-sm text-white/70">
+                        Click on any brand to inspect stock levels, perform batch restocks, or adjust low-stock thresholds.
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Summary Metric Cards */}
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                    <div className="rounded-xl border border-white/10 bg-slate-900/40 p-4">
+                      <p className="text-xs text-white/60">Total Units in Stock</p>
+                      <p className="mt-1 text-2xl font-bold text-white">{inventorySummary.totalUnits}</p>
+                    </div>
+                    <div className="rounded-xl border border-white/10 bg-slate-900/40 p-4">
+                      <p className="text-xs text-white/60">Total Flavors</p>
+                      <p className="mt-1 text-2xl font-bold text-red-400">{inventorySummary.totalFlavors}</p>
+                    </div>
+                    <div className="rounded-xl border border-white/10 bg-slate-900/40 p-4">
+                      <p className="text-xs text-white/60">Low Stock Alert Items</p>
+                      <p className="mt-1 text-2xl font-bold text-amber-300">{inventorySummary.lowStockTotal}</p>
+                    </div>
+                    <div className="rounded-xl border border-white/10 bg-slate-900/40 p-4">
+                      <p className="text-xs text-white/60">Out of Stock Items</p>
+                      <p className="mt-1 text-2xl font-bold text-rose-400">{inventorySummary.outOfStockTotal}</p>
+                    </div>
+                  </div>
+
+                  {/* Search and Stock Status Filters */}
+                  <Card className="flex flex-wrap items-center justify-between gap-3 p-3">
+                    <div className="relative min-w-[240px] flex-1">
+                      <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-white/50" />
+                      <Input
+                        value={inventoryBrandSearch}
+                        onChange={(e) => setInventoryBrandSearch(e.target.value)}
+                        placeholder="Search brands in inventory..."
+                        className="pl-9"
+                      />
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div className="flex items-center gap-1.5 text-xs text-white/60">
+                        <Filter className="h-3.5 w-3.5" /> Stock Filter:
+                      </div>
+                      <select
+                        className="h-10 rounded-xl border border-white/10 bg-white/5 px-3 text-sm text-white focus:outline-none"
+                        value={inventoryStockFilter}
+                        onChange={(e) => setInventoryStockFilter(e.target.value as "all" | "low-stock" | "out-of-stock" | "healthy")}
+                      >
+                        <option value="all">All Brands</option>
+                        <option value="low-stock">Needs Attention (Low/Out of stock)</option>
+                        <option value="out-of-stock">Out of Stock Only</option>
+                        <option value="healthy">Healthy Stock</option>
+                      </select>
+                    </div>
+                  </Card>
+
+                  {/* Brand Inventory Grid */}
+                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                    {filteredInventoryBrands.map(({ brand, flavorsCount, totalStock, outOfStockCount, lowStockCount, healthStatus }) => {
+                      const healthBadge =
+                        healthStatus === "out-of-stock" ? (
+                          <Badge className="border-rose-500/30 bg-rose-500/20 text-rose-300 flex items-center gap-1">
+                            <XCircle className="h-3 w-3" /> {outOfStockCount} Out of Stock
+                          </Badge>
+                        ) : healthStatus === "low-stock" ? (
+                          <Badge className="border-amber-500/30 bg-amber-500/20 text-amber-300 flex items-center gap-1">
+                            <AlertTriangle className="h-3 w-3" /> {lowStockCount} Low Stock
+                          </Badge>
+                        ) : (
+                          <Badge className="border-emerald-500/30 bg-emerald-500/20 text-emerald-300 flex items-center gap-1">
+                            <CheckCircle2 className="h-3 w-3" /> Healthy Stock
+                          </Badge>
+                        );
+
+                      return (
+                        <motion.div
+                          key={brand.id}
+                          whileHover={{ y: -4 }}
+                          className="group relative flex flex-col justify-between overflow-hidden rounded-2xl border border-white/10 bg-slate-900/50 p-4 shadow-lg backdrop-blur transition hover:border-red-500/40 hover:bg-slate-900/80"
+                        >
+                          <div>
+                            <div className="mb-3 flex items-center justify-between gap-2">
+                              {healthBadge}
+                              <Badge className="border-white/15 bg-white/5 text-xs text-white/80">
+                                {brand.category === "transparent" ? "Transparent" : "Non-Transparent"}
+                              </Badge>
+                            </div>
+
+                            <div className="relative mb-3 flex h-36 w-full items-center justify-center overflow-hidden rounded-xl bg-black/40 p-2">
+                              <ProductImage
+                                src={brand.imageUrl}
+                                alt={brand.name}
+                                className="h-full w-full object-contain transition duration-300 group-hover:scale-105"
+                              />
+                            </div>
+
+                            <div className="space-y-1">
+                              <h3 className="text-lg font-bold text-white group-hover:text-red-400">{brand.name}</h3>
+                              <div className="flex items-center justify-between text-xs text-white/70">
+                                <span>{flavorsCount} Flavors</span>
+                                <span className="font-semibold text-white">{totalStock} total units</span>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="mt-4 pt-3 border-t border-white/10">
+                            <Button
+                              onClick={() => {
+                                setSelectedInventoryBrandId(brand.id);
+                                setInventoryFlavorSearch("");
+                              }}
+                              className="w-full flex items-center justify-center gap-1.5 text-xs"
+                            >
+                              Manage Inventory <ChevronRight className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
+                        </motion.div>
+                      );
+                    })}
+                  </div>
+
+                  {!filteredInventoryBrands.length && (
+                    <Card className="p-8 text-center">
+                      <Boxes className="mx-auto mb-2 h-8 w-8 text-white/40" />
+                      <p className="font-semibold">No inventory records matching your filter</p>
+                    </Card>
+                  )}
+                </>
+              ) : (
+                /* DRILLDOWN LEVEL: SELECTED BRAND INVENTORY MANAGER */
+                activeInventoryBrandStat && (
+                  <div className="space-y-6">
+                    {/* Navigation Header */}
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <Button
+                        variant="outline"
+                        onClick={() => setSelectedInventoryBrandId(null)}
+                        className="flex items-center gap-2"
+                      >
+                        <ArrowLeft className="h-4 w-4" /> Back to Brands Inventory
+                      </Button>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="outline"
+                          onClick={() => {
+                            // Quick restock all flavors in brand by +5
+                            activeInventoryFlavors.forEach((f) => updateFlavor(f.id, { stock: f.stock + 5 }));
+                            toast.success(`Added +5 stock to all ${activeInventoryBrandStat.brand.name} flavors`);
+                          }}
+                          className="flex items-center gap-1.5 text-xs"
+                        >
+                          <RefreshCw className="h-3.5 w-3.5" /> Restock All Flavors (+5)
+                        </Button>
+                      </div>
+                    </div>
+
+                    {/* Brand Stock Stats Banner */}
+                    <Card className="border-red-500/20 bg-slate-900/70 p-5">
+                      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="flex items-center gap-4">
+                          <div className="h-20 w-20 shrink-0 overflow-hidden rounded-xl border border-white/10 bg-black/40 p-2">
+                            <ProductImage
+                              src={activeInventoryBrandStat.brand.imageUrl}
+                              alt={activeInventoryBrandStat.brand.name}
+                              className="h-full w-full object-contain"
+                            />
+                          </div>
+                          <div>
+                            <h2 className="text-xl font-bold">{activeInventoryBrandStat.brand.name} Stock Manager</h2>
+                            <p className="text-xs text-white/60">
+                              Category: {activeInventoryBrandStat.brand.category} · Price: {toCurrency(activeInventoryBrandStat.brand.price ?? settings.podPrice)}
+                            </p>
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              <span className="rounded-md bg-white/10 px-2 py-0.5 text-xs">
+                                Total Units: <b>{activeInventoryBrandStat.totalStock}</b>
+                              </span>
+                              <span className="rounded-md bg-emerald-500/20 px-2 py-0.5 text-xs text-emerald-300">
+                                In Stock: <b>{activeInventoryBrandStat.healthyCount}</b>
+                              </span>
+                              {activeInventoryBrandStat.lowStockCount > 0 && (
+                                <span className="rounded-md bg-amber-500/20 px-2 py-0.5 text-xs text-amber-300">
+                                  Low Stock: <b>{activeInventoryBrandStat.lowStockCount}</b>
+                                </span>
+                              )}
+                              {activeInventoryBrandStat.outOfStockCount > 0 && (
+                                <span className="rounded-md bg-rose-500/20 px-2 py-0.5 text-xs text-rose-300">
+                                  Out of Stock: <b>{activeInventoryBrandStat.outOfStockCount}</b>
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </Card>
+
+                    {/* Flavors Stock Grid / Table */}
+                    <div className="space-y-4">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <h3 className="text-lg font-bold">Flavors Stock Adjustment</h3>
+                        <div className="relative min-w-[220px]">
+                          <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-white/50" />
+                          <Input
+                            value={inventoryFlavorSearch}
+                            onChange={(e) => setInventoryFlavorSearch(e.target.value)}
+                            placeholder="Filter flavors..."
+                            className="pl-9 text-sm"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                        {activeInventoryFlavors.map((flavor) => {
+                          const alertThreshold = flavor.lowStockAlert || settings.lowStockDefault;
+                          const isOutOfStock = flavor.stock === 0;
+                          const isLowStock = !isOutOfStock && flavor.stock <= alertThreshold;
+
+                          return (
+                            <div
+                              key={flavor.id}
+                              className="flex flex-col justify-between rounded-xl border border-white/10 bg-slate-900/50 p-4 shadow backdrop-blur transition hover:border-white/20"
+                            >
+                              <div>
+                                <div className="mb-2 flex items-center justify-between gap-2">
+                                  <span
+                                    className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold ${
+                                      isOutOfStock
+                                        ? "bg-rose-500/20 text-rose-300"
+                                        : isLowStock
+                                          ? "bg-amber-500/20 text-amber-300"
+                                          : "bg-emerald-500/20 text-emerald-300"
+                                    }`}
+                                  >
+                                    {isOutOfStock ? <XCircle className="h-3 w-3" /> : isLowStock ? <AlertTriangle className="h-3 w-3" /> : <CheckCircle2 className="h-3 w-3" />}
+                                    {isOutOfStock ? "Out of Stock" : isLowStock ? "Low Stock" : "In Stock"}
+                                  </span>
+                                  <span className="text-xs text-white/50">Alert at: {alertThreshold}</span>
+                                </div>
+
+                                <div className="flex items-center justify-between gap-3">
+                                  <div className="flex-1 min-w-0">
+                                    <h4 className="font-semibold text-white truncate text-base">{flavor.name}</h4>
+                                    <p className="text-xs text-white/60">Alert threshold: {alertThreshold}</p>
+                                  </div>
+                                  <p className="text-2xl font-extrabold text-white shrink-0">{flavor.stock} <span className="text-xs font-normal text-white/60">units</span></p>
+                                </div>
+                              </div>
+
+                              {/* Quick Adjustment Controls */}
+                              <div className="mt-4 space-y-2 border-t border-white/10 pt-3">
+                                <div className="flex items-center justify-between gap-1">
+                                  <span className="text-xs text-white/60">Quick Adjust:</span>
+                                  <div className="flex items-center gap-1">
+                                    <Button
+                                      variant="outline"
+                                      className="h-8 px-2 text-xs"
+                                      onClick={() => updateFlavor(flavor.id, { stock: Math.max(0, flavor.stock - 5) })}
+                                    >
+                                      -5
+                                    </Button>
+                                    <Button
+                                      variant="outline"
+                                      className="h-8 px-2 text-xs"
+                                      onClick={() => updateFlavor(flavor.id, { stock: Math.max(0, flavor.stock - 1) })}
+                                    >
+                                      -1
+                                    </Button>
+                                    <Button
+                                      variant="outline"
+                                      className="h-8 px-2 text-xs text-emerald-400"
+                                      onClick={() => updateFlavor(flavor.id, { stock: flavor.stock + 1 })}
+                                    >
+                                      +1
+                                    </Button>
+                                    <Button
+                                      variant="outline"
+                                      className="h-8 px-2 text-xs text-emerald-400"
+                                      onClick={() => updateFlavor(flavor.id, { stock: flavor.stock + 5 })}
+                                    >
+                                      +5
+                                    </Button>
+                                  </div>
+                                </div>
+
+                                <div className="flex items-center justify-between gap-2 pt-1 text-xs">
+                                  <span className="text-white/60">Low Alert Threshold:</span>
+                                  <div className="flex items-center gap-1">
+                                    <Button
+                                      variant="ghost"
+                                      className="h-6 w-6 p-0 text-xs"
+                                      onClick={() => updateFlavor(flavor.id, { lowStockAlert: Math.max(1, alertThreshold - 1) })}
+                                    >
+                                      -
+                                    </Button>
+                                    <span className="font-semibold text-white">{alertThreshold}</span>
+                                    <Button
+                                      variant="ghost"
+                                      className="h-6 w-6 p-0 text-xs"
+                                      onClick={() => updateFlavor(flavor.id, { lowStockAlert: alertThreshold + 1 })}
+                                    >
+                                      +
+                                    </Button>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {!activeInventoryFlavors.length && (
+                        <Card className="p-8 text-center">
+                          <p className="text-sm text-white/60">No flavors found for this brand.</p>
+                        </Card>
+                      )}
+                    </div>
+                  </div>
+                )
+              )}
+            </div>
+          )}
+
+          {/* ========================================================================= */}
+          {/* CUSTOMERS SECTION */}
+          {/* ========================================================================= */}
           {active === "Customers" && (
             <div className="space-y-4">
-              <Card className="flex flex-wrap gap-2">
+              <Card className="flex flex-wrap gap-2 p-4">
                 <Input placeholder="Customer name" value={customerName} onChange={(e) => setCustomerName(e.target.value)} className="max-w-sm" />
-                <Button onClick={async () => {
-                  await createCustomer({ name: customerName });
-                  setCustomerName("");
-                  toast.success("Customer created");
-                }}>Create Customer</Button>
+                <Button
+                  onClick={async () => {
+                    if (!customerName.trim()) return toast.error("Please enter a customer name.");
+                    await createCustomer({ name: customerName.trim() });
+                    setCustomerName("");
+                    toast.success("Customer created");
+                  }}
+                >
+                  Create Customer
+                </Button>
               </Card>
               <div className="grid gap-3 md:grid-cols-2">
                 {customers.map((customer) => {
                   const reward = computeRewardState(customer.totalPurchased, customer.totalRedeemed);
                   return (
-                    <Card key={customer.id}>
+                    <Card key={customer.id} className="p-4">
                       {editingCustomerId === customer.id ? (
                         <div className="flex flex-wrap gap-2">
                           <Input value={editingCustomerName} onChange={(event) => setEditingCustomerName(event.target.value)} aria-label="Customer name" />
-                          <Button onClick={async () => {
-                            const name = editingCustomerName.trim();
-                            if (!name) return toast.error("Customer name is required.");
-                            await updateCustomer(customer.id, { name });
-                            setEditingCustomerId(null);
-                            toast.success("Customer name updated");
-                          }}>Save</Button>
-                          <Button variant="outline" onClick={() => setEditingCustomerId(null)}>Cancel</Button>
+                          <Button
+                            onClick={async () => {
+                              const name = editingCustomerName.trim();
+                              if (!name) return toast.error("Customer name is required.");
+                              await updateCustomer(customer.id, { name });
+                              setEditingCustomerId(null);
+                              toast.success("Customer name updated");
+                            }}
+                          >
+                            Save
+                          </Button>
+                          <Button variant="outline" onClick={() => setEditingCustomerId(null)}>
+                            Cancel
+                          </Button>
                         </div>
                       ) : (
                         <div className="flex items-center justify-between gap-2">
-                          <p className="font-semibold">{customer.name}</p>
-                          <Button variant="outline" onClick={() => {
-                            setEditingCustomerId(customer.id);
-                            setEditingCustomerName(customer.name);
-                          }}>Edit Name</Button>
+                          <p className="font-semibold text-white">{customer.name}</p>
+                          <Button
+                            variant="outline"
+                            onClick={() => {
+                              setEditingCustomerId(customer.id);
+                              setEditingCustomerName(customer.name);
+                            }}
+                          >
+                            Edit Name
+                          </Button>
                         </div>
                       )}
-                      <p className="text-sm">Purchases: {customer.totalPurchased} | Redeemed: {customer.totalRedeemed}</p>
-                      <p className="text-sm">Progress: {reward.progress}/10 | Claimable: {reward.claimable}</p>
+                      <p className="mt-1 text-sm text-white/80">Purchases: {customer.totalPurchased} | Redeemed: {customer.totalRedeemed}</p>
+                      <p className="text-sm text-red-400">Progress: {reward.progress}/10 | Claimable: {reward.claimable}</p>
                       <div className="mt-3 flex flex-wrap gap-2">
                         <Button
                           variant="outline"
@@ -529,7 +1803,16 @@ export function AdminDashboard() {
                         >
                           {expandedCustomerId === customer.id ? "Hide Bought Items" : "Manage Bought Items"}
                         </Button>
-                        <Button variant="danger" onClick={() => deleteCustomer(customer.id)}>Delete</Button>
+                        <Button
+                          variant="danger"
+                          onClick={() => {
+                            if (confirm(`Delete customer "${customer.name}"?`)) {
+                              deleteCustomer(customer.id);
+                            }
+                          }}
+                        >
+                          Delete
+                        </Button>
                       </div>
 
                       {expandedCustomerId === customer.id && (
@@ -542,9 +1825,10 @@ export function AdminDashboard() {
                           <div className="space-y-2">
                             {editedCustomerItems.map((item) => {
                               const matchingFlavor = customerItemFlavors.find((f) => f.id === item.flavorId);
-                              const displayName = matchingFlavor && !item.flavorName.toLowerCase().startsWith(matchingFlavor.brandName.toLowerCase())
-                                ? `${matchingFlavor.brandName} - ${item.flavorName}`
-                                : item.flavorName;
+                              const displayName =
+                                matchingFlavor && !item.flavorName.toLowerCase().startsWith(matchingFlavor.brandName.toLowerCase())
+                                  ? `${matchingFlavor.brandName} - ${item.flavorName}`
+                                  : item.flavorName;
                               return (
                                 <div key={item.flavorId} className="flex flex-wrap items-center gap-2 rounded-xl border border-white/10 p-2">
                                   <p className="min-w-32 flex-1 text-sm">{displayName}</p>
@@ -554,13 +1838,22 @@ export function AdminDashboard() {
                                     min={1}
                                     aria-label={`${displayName} quantity`}
                                     value={item.quantity}
-                                    onChange={(event) => setEditedCustomerItems((items) => items.map((currentItem) => (
-                                      currentItem.flavorId === item.flavorId
-                                        ? { ...currentItem, quantity: Math.max(1, Math.floor(Number(event.target.value) || 1)) }
-                                        : currentItem
-                                    )))}
+                                    onChange={(event) =>
+                                      setEditedCustomerItems((items) =>
+                                        items.map((currentItem) =>
+                                          currentItem.flavorId === item.flavorId
+                                            ? { ...currentItem, quantity: Math.max(1, Math.floor(Number(event.target.value) || 1)) }
+                                            : currentItem,
+                                        ),
+                                      )
+                                    }
                                   />
-                                  <Button variant="danger" onClick={() => setEditedCustomerItems((items) => items.filter((currentItem) => currentItem.flavorId !== item.flavorId))}>Remove</Button>
+                                  <Button
+                                    variant="danger"
+                                    onClick={() => setEditedCustomerItems((items) => items.filter((currentItem) => currentItem.flavorId !== item.flavorId))}
+                                  >
+                                    Remove
+                                  </Button>
                                 </div>
                               );
                             })}
@@ -597,7 +1890,9 @@ export function AdminDashboard() {
                                 setEditedCustomerItems((items) => {
                                   const existing = items.find((item) => item.flavorId === flavor.id);
                                   return existing
-                                    ? items.map((item) => item.flavorId === flavor.id ? { ...item, flavorName: flavorDisplayName, quantity: item.quantity + customerItemQuantity } : item)
+                                    ? items.map((item) =>
+                                        item.flavorId === flavor.id ? { ...item, flavorName: flavorDisplayName, quantity: item.quantity + customerItemQuantity } : item,
+                                      )
                                     : [...items, { flavorId: flavor.id, flavorName: flavorDisplayName, quantity: customerItemQuantity }];
                                 });
                                 setCustomerItemFlavorId("");
@@ -629,20 +1924,42 @@ export function AdminDashboard() {
             </div>
           )}
 
+          {/* ========================================================================= */}
+          {/* SALES & REDEMPTIONS SECTION */}
+          {/* ========================================================================= */}
           {active === "Sales" && (
             <div className="grid gap-6 xl:grid-cols-2">
-              <Card className="space-y-3">
+              <Card className="space-y-3 p-5">
                 <h3 className="text-lg font-bold">Create Purchase</h3>
-                <select className="h-10 rounded-xl bg-white/5 px-3" value={purchase.customerId} onChange={(e) => setPurchase((s) => ({ ...s, customerId: e.target.value }))}>
+                <select className="h-10 w-full rounded-xl bg-white/5 px-3" value={purchase.customerId} onChange={(e) => setPurchase((s) => ({ ...s, customerId: e.target.value }))}>
                   <option value="">Select customer</option>
-                  {customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}
+                  {customers.map((customer) => (
+                    <option key={customer.id} value={customer.id}>
+                      {customer.name}
+                    </option>
+                  ))}
                 </select>
-                <select className="h-10 rounded-xl bg-white/5 px-3" value={purchase.brandId} onChange={(e) => setPurchase((s) => ({ ...s, brandId: e.target.value, flavorId: "" }))}>
+                <select
+                  className="h-10 w-full rounded-xl bg-white/5 px-3"
+                  value={purchase.brandId}
+                  onChange={(e) => setPurchase((s) => ({ ...s, brandId: e.target.value, flavorId: "" }))}
+                >
                   <option value="">Select brand</option>
-                  {availableBrands.map((brand) => <option key={brand.id} value={brand.id}>{brand.name}</option>)}
+                  {availableBrands.map((brand) => (
+                    <option key={brand.id} value={brand.id}>
+                      {brand.name}
+                    </option>
+                  ))}
                 </select>
-                <select className="h-10 rounded-xl bg-white/5 px-3" disabled={!purchase.brandId} value={purchase.flavorId} onChange={(e) => setPurchase((s) => ({ ...s, flavorId: e.target.value }))}>
-                  <option value="">{purchase.brandId ? (flavorOptions.length ? "Select available flavor" : "No flavors in stock") : "Select brand first"}</option>
+                <select
+                  className="h-10 w-full rounded-xl bg-white/5 px-3"
+                  disabled={!purchase.brandId}
+                  value={purchase.flavorId}
+                  onChange={(e) => setPurchase((s) => ({ ...s, flavorId: e.target.value }))}
+                >
+                  <option value="">
+                    {purchase.brandId ? (flavorOptions.length ? "Select available flavor" : "No flavors in stock") : "Select brand first"}
+                  </option>
                   {flavorOptions.map((flavor) => (
                     <option key={flavor.id} value={flavor.id}>
                       {flavor.name} ({flavor.stock} in stock)
@@ -650,77 +1967,109 @@ export function AdminDashboard() {
                   ))}
                 </select>
                 <Input type="number" min={1} value={purchase.quantity} onChange={(e) => setPurchase((s) => ({ ...s, quantity: Number(e.target.value) }))} />
-                <Button onClick={async () => {
-                  const customer = customers.find((x) => x.id === purchase.customerId);
-                  const brand = brands.find((x) => x.id === purchase.brandId);
-                  const flavor = catalogFlavors.find((x) => x.id === purchase.flavorId);
-                  if (!customer) return toast.error("Please select a customer.");
-                  if (!brand) return toast.error("Please select a brand.");
-                  if (!flavor) return toast.error("Please select a flavor.");
-                  const qty = Math.max(1, Math.floor(Number(purchase.quantity) || 1));
-                  if (flavor.stock < qty) {
-                    return toast.error(`Insufficient stock for ${flavor.name} (Available: ${flavor.stock}, Requested: ${qty}). Please increase stock in Products or Inventory.`);
-                  }
-                  try {
-                    await recordPurchase({
-                      customerId: customer.id,
-                      customerName: customer.name,
-                      brandId: brand.id,
-                      brandName: brand.name,
-                      flavorId: flavor.id,
-                      flavorName: flavor.name,
-                      quantity: qty,
-                      amount: qty * (brand.price ?? settings.podPrice),
-                    });
-                    setPurchase({ customerId: "", brandId: "", flavorId: "", quantity: 1 });
-                    toast.success(`Purchase recorded: ${qty}x ${flavor.name} for ${customer.name}`);
-                  } catch (error) {
-                    console.error("Purchase error:", error);
-                    toast.error(error instanceof Error ? error.message : "Could not record purchase.");
-                  }
-                }}>Save Purchase</Button>
+                <Button
+                  onClick={async () => {
+                    const customer = customers.find((x) => x.id === purchase.customerId);
+                    const brand = brands.find((x) => x.id === purchase.brandId);
+                    const flavor = catalogFlavors.find((x) => x.id === purchase.flavorId);
+                    if (!customer) return toast.error("Please select a customer.");
+                    if (!brand) return toast.error("Please select a brand.");
+                    if (!flavor) return toast.error("Please select a flavor.");
+                    const qty = Math.max(1, Math.floor(Number(purchase.quantity) || 1));
+                    if (flavor.stock < qty) {
+                      return toast.error(`Insufficient stock for ${flavor.name} (Available: ${flavor.stock}, Requested: ${qty}). Please increase stock in Products or Inventory.`);
+                    }
+                    try {
+                      await recordPurchase({
+                        customerId: customer.id,
+                        customerName: customer.name,
+                        brandId: brand.id,
+                        brandName: brand.name,
+                        flavorId: flavor.id,
+                        flavorName: flavor.name,
+                        quantity: qty,
+                        amount: qty * (brand.price ?? settings.podPrice),
+                      });
+                      setPurchase({ customerId: "", brandId: "", flavorId: "", quantity: 1 });
+                      toast.success(`Purchase recorded: ${qty}x ${flavor.name} for ${customer.name}`);
+                    } catch (error) {
+                      console.error("Purchase error:", error);
+                      toast.error(error instanceof Error ? error.message : "Could not record purchase.");
+                    }
+                  }}
+                >
+                  Save Purchase
+                </Button>
               </Card>
 
-              <Card className="space-y-3">
+              <Card className="space-y-3 p-5">
                 <h3 className="text-lg font-bold">Redeem Free Pod</h3>
-                <select className="h-10 rounded-xl bg-white/5 px-3" value={redeem.customerId} onChange={(e) => setRedeem({ customerId: e.target.value, brandId: "", flavorId: "" })}>
+                <select
+                  className="h-10 w-full rounded-xl bg-white/5 px-3"
+                  value={redeem.customerId}
+                  onChange={(e) => setRedeem({ customerId: e.target.value, brandId: "", flavorId: "" })}
+                >
                   <option value="">Select customer</option>
                   {customers.map((customer) => {
                     const claimable = computeRewardState(customer.totalPurchased, customer.totalRedeemed).claimable;
-                    return <option key={customer.id} value={customer.id}>{customer.name} ({claimable} claimable)</option>;
+                    return (
+                      <option key={customer.id} value={customer.id}>
+                        {customer.name} ({claimable} claimable)
+                      </option>
+                    );
                   })}
                 </select>
-                <select className="h-10 rounded-xl bg-white/5 px-3" disabled={!redeem.customerId} value={redeem.brandId} onChange={(e) => setRedeem((s) => ({ ...s, brandId: e.target.value, flavorId: "" }))}>
+                <select
+                  className="h-10 w-full rounded-xl bg-white/5 px-3"
+                  disabled={!redeem.customerId}
+                  value={redeem.brandId}
+                  onChange={(e) => setRedeem((s) => ({ ...s, brandId: e.target.value, flavorId: "" }))}
+                >
                   <option value="">{redeem.customerId ? "Select brand" : "Select customer first"}</option>
-                  {availableBrands.map((brand) => <option key={brand.id} value={brand.id}>{brand.name}</option>)}
+                  {availableBrands.map((brand) => (
+                    <option key={brand.id} value={brand.id}>
+                      {brand.name}
+                    </option>
+                  ))}
                 </select>
-                <select className="h-10 rounded-xl bg-white/5 px-3" disabled={!redeem.brandId} value={redeem.flavorId} onChange={(e) => setRedeem((s) => ({ ...s, flavorId: e.target.value }))}>
-                  <option value="">{redeem.brandId ? (redeemFlavorOptions.length ? "Select available flavor" : "No flavors in stock") : "Select brand first"}</option>
+                <select
+                  className="h-10 w-full rounded-xl bg-white/5 px-3"
+                  disabled={!redeem.brandId}
+                  value={redeem.flavorId}
+                  onChange={(e) => setRedeem((s) => ({ ...s, flavorId: e.target.value }))}
+                >
+                  <option value="">
+                    {redeem.brandId ? (redeemFlavorOptions.length ? "Select available flavor" : "No flavors in stock") : "Select brand first"}
+                  </option>
                   {redeemFlavorOptions.map((flavor) => (
                     <option key={flavor.id} value={flavor.id}>
                       {flavor.name} ({flavor.stock} in stock)
                     </option>
                   ))}
                 </select>
-                <Button onClick={async () => {
-                  const customer = customers.find((x) => x.id === redeem.customerId);
-                  const flavor = catalogFlavors.find((x) => x.id === redeem.flavorId);
-                  if (!customer) return toast.error("Please select a customer.");
-                  if (!redeem.brandId) return toast.error("Please select a brand.");
-                  if (!flavor) return toast.error("Please select a flavor.");
-                  if (flavor.stock < 1) return toast.error(`${flavor.name} is out of stock (Stock: 0).`);
-                  try {
-                    await redeemFreePod({ customerId: customer.id, customerName: customer.name, flavorId: flavor.id, flavorName: flavor.name });
-                    setRedeem({ customerId: "", brandId: "", flavorId: "" });
-                    toast.success("Free pod redeemed");
-                  } catch (error) {
-                    console.error("Redeem error:", error);
-                    toast.error(error instanceof Error ? error.message : "Could not redeem free pod.");
-                  }
-                }}>Redeem</Button>
+                <Button
+                  onClick={async () => {
+                    const customer = customers.find((x) => x.id === redeem.customerId);
+                    const flavor = catalogFlavors.find((x) => x.id === redeem.flavorId);
+                    if (!customer) return toast.error("Please select a customer.");
+                    if (!redeem.brandId) return toast.error("Please select a brand.");
+                    if (!flavor) return toast.error("Please select a flavor.");
+                    if (flavor.stock < 1) return toast.error(`${flavor.name} is out of stock (Stock: 0).`);
+                    try {
+                      await redeemFreePod({ customerId: customer.id, customerName: customer.name, flavorId: flavor.id, flavorName: flavor.name });
+                      setRedeem({ customerId: "", brandId: "", flavorId: "" });
+                      toast.success("Free pod redeemed");
+                    } catch (error) {
+                      console.error("Redeem error:", error);
+                      toast.error(error instanceof Error ? error.message : "Could not redeem free pod.");
+                    }
+                  }}
+                >
+                  Redeem
+                </Button>
               </Card>
 
-              <Card className="xl:col-span-2">
+              <Card className="xl:col-span-2 p-5">
                 <div className="mb-3 flex items-center justify-between gap-3">
                   <h3 className="text-lg font-bold">Sales History</h3>
                   <p className="text-sm text-white/70">{sales.length} recorded</p>
@@ -729,8 +2078,12 @@ export function AdminDashboard() {
                   {sales.map((sale) => (
                     <div key={sale.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/10 p-3 text-sm">
                       <div>
-                        <p className="font-semibold">{sale.customerName} · {sale.brandName} - {sale.flavorName}</p>
-                        <p className="text-white/70">{sale.quantity} pod(s) · {toCurrency(sale.amount)}</p>
+                        <p className="font-semibold text-white">
+                          {sale.customerName} · {sale.brandName} - {sale.flavorName}
+                        </p>
+                        <p className="text-white/70">
+                          {sale.quantity} pod(s) · {toCurrency(sale.amount)}
+                        </p>
                       </div>
                       <Button
                         variant="danger"
@@ -753,9 +2106,391 @@ export function AdminDashboard() {
             </div>
           )}
 
+          {/* ========================================================================= */}
+          {/* ROULETTE & REWARD SPIN MANAGEMENT SECTION */}
+          {/* ========================================================================= */}
+          {active === "Roulette" && (
+            <div className="space-y-6">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h2 className="text-2xl font-bold flex items-center gap-2">
+                    <Dices className="h-6 w-6 text-red-500" />
+                    Roulette & Reward Wheel
+                  </h2>
+                  <p className="text-sm text-white/70">
+                    Generate single-use spin links for customers reaching 10 pods and configure dynamic wheel odds.
+                  </p>
+                </div>
+              </div>
+
+              {/* Top Banner: Ticket Generator & Quick Link */}
+              <div className="grid gap-6 lg:grid-cols-2">
+                <Card className="space-y-4 p-5 border-red-500/20 bg-gradient-to-br from-red-950/20 via-slate-900/60 to-slate-900/40">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-red-400 font-semibold text-base">
+                      <Sparkles className="h-5 w-5" />
+                      Issue Spin Voucher Link
+                    </div>
+                    <Button
+                      variant="outline"
+                      className="text-xs h-7 px-2.5 py-0 border-red-400/40 bg-red-500/10 text-red-200 hover:bg-red-500/20"
+                      onClick={async () => {
+                        try {
+                          const testName = `Test Customer (${Math.floor(100 + Math.random() * 900)})`;
+                          await createCustomer({
+                            name: testName,
+                            totalPurchased: 10,
+                            totalRedeemed: 0,
+                          });
+                          toast.success(`Created ${testName} with 10 purchased pods!`);
+                        } catch (err) {
+                          toast.error(err instanceof Error ? err.message : "Failed to add test customer");
+                        }
+                      }}
+                    >
+                      + Add Test Customer (10 Pods)
+                    </Button>
+                  </div>
+                  <p className="text-xs text-white/60">
+                    Select an eligible customer who has reached at least 10 purchased pods (1+ claimable reward) to generate a unique 1-time spin link.
+                  </p>
+
+                  <div className="space-y-3">
+                    <div className="space-y-1">
+                      <label className="text-xs font-medium text-white/80" htmlFor="spin-customer-select">
+                        Customer
+                      </label>
+                      <select
+                        id="spin-customer-select"
+                        aria-label="Customer for spin ticket"
+                        className="h-10 w-full rounded-xl border border-white/10 bg-white/5 px-3 text-sm text-white focus:outline-none"
+                        value={selectedSpinCustomerId}
+                        onChange={(e) => setSelectedSpinCustomerId(e.target.value)}
+                      >
+                        <option value="">Select an eligible customer...</option>
+                        {customers.map((c) => {
+                          const reward = computeRewardState(c.totalPurchased, c.totalRedeemed);
+                          return (
+                            <option key={c.id} value={c.id}>
+                              {c.name} — {c.totalPurchased} pods bought ({reward.claimable} reward{reward.claimable === 1 ? "" : "s"} ready)
+                            </option>
+                          );
+                        })}
+                      </select>
+                    </div>
+
+                    <Button
+                      className="w-full bg-gradient-to-r from-red-600 via-rose-600 to-red-700 hover:from-red-500 hover:to-red-600 text-white font-semibold flex items-center justify-center gap-2 shadow-lg shadow-red-950/50"
+                      disabled={!selectedSpinCustomerId || generatingSpinTicket}
+                      onClick={async () => {
+                        const targetCustomer = customers.find((c) => c.id === selectedSpinCustomerId);
+                        if (!targetCustomer) return;
+                        setGeneratingSpinTicket(true);
+                        try {
+                          const ticket = await createSpinTicket(targetCustomer.id, targetCustomer.name);
+                          setNewlyCreatedTicket(ticket);
+                          toast.success(`Spin voucher generated: ${ticket.code}`);
+                        } catch (err) {
+                          toast.error(err instanceof Error ? err.message : "Failed to generate spin ticket.");
+                        } finally {
+                          setGeneratingSpinTicket(false);
+                        }
+                      }}
+                    >
+                      <Dices className="h-4 w-4" />
+                      {generatingSpinTicket ? "Generating..." : "Generate 1-Time Spin Link"}
+                    </Button>
+
+                    {newlyCreatedTicket && (
+                      <div className="mt-4 rounded-xl border border-red-500/30 bg-red-950/40 p-3 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-semibold text-red-400">Generated Ticket:</span>
+                          <Badge className="font-mono text-xs border-red-400 bg-red-900/40 text-red-200">
+                            {newlyCreatedTicket.code}
+                          </Badge>
+                        </div>
+                        <p className="text-xs text-white/70">
+                          Customer: <span className="font-medium text-white">{newlyCreatedTicket.customerName}</span>
+                        </p>
+                        <div className="flex items-center gap-2 pt-1">
+                          <Button
+                            className="flex-1 text-xs gap-1.5 py-1 px-2 h-8"
+                            onClick={() => {
+                              const spinUrl = `${window.location.origin}/spin?code=${newlyCreatedTicket.code}`;
+                              navigator.clipboard.writeText(spinUrl);
+                              toast.success("Spin link copied to clipboard!");
+                            }}
+                          >
+                            <Copy className="h-3.5 w-3.5" /> Copy Link
+                          </Button>
+                          <Button
+                            variant="outline"
+                            className="text-xs gap-1.5 py-1 px-2 h-8"
+                            onClick={() => {
+                              window.open(`/spin?code=${newlyCreatedTicket.code}`, "_blank");
+                            }}
+                          >
+                            <ExternalLink className="h-3.5 w-3.5" /> Open
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </Card>
+
+                {/* Probability & Chances Settings */}
+                <Card className="space-y-4 p-5 border-white/10 bg-slate-900/50">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-red-400 font-semibold text-base">
+                      <SlidersHorizontal className="h-5 w-5" />
+                      Wheel Probability Odds
+                    </div>
+                    <Button
+                      disabled={savingOdds}
+                      onClick={async () => {
+                        setSavingOdds(true);
+                        try {
+                          await saveSettings(settings);
+                          toast.success("Probability weights saved!");
+                        } catch (err) {
+                          toast.error("Failed to save wheel odds.");
+                        } finally {
+                          setSavingOdds(false);
+                        }
+                      }}
+                      className="text-xs bg-red-600 hover:bg-red-500 text-white h-8 px-3 py-1"
+                    >
+                      {savingOdds ? "Saving..." : "Save Odds"}
+                    </Button>
+                  </div>
+                  <p className="text-xs text-white/60">
+                    Adjust the relative weight chances for the Stage 1 Category Spin and Stage 2 Brand Spin. Higher weight means higher probability.
+                  </p>
+
+                  <div className="space-y-4">
+                    <div className="rounded-xl border border-white/10 bg-white/5 p-3 space-y-2">
+                      <p className="text-xs font-semibold text-red-400">Stage 1: Category Odds</p>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="text-[11px] text-white/70 block mb-1">Non-Transparent Weight</label>
+                          <Input
+                            type="number"
+                            min={1}
+                            value={settings.nonTransparentWeight ?? 50}
+                            onChange={(e) =>
+                              setSettings((s) => ({
+                                ...s,
+                                nonTransparentWeight: Math.max(1, Number(e.target.value) || 1),
+                              }))
+                            }
+                            className="h-8 text-xs font-mono"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[11px] text-white/70 block mb-1">Transparent Weight</label>
+                          <Input
+                            type="number"
+                            min={1}
+                            value={settings.transparentWeight ?? 50}
+                            onChange={(e) =>
+                              setSettings((s) => ({
+                                ...s,
+                                transparentWeight: Math.max(1, Number(e.target.value) || 1),
+                              }))
+                            }
+                            className="h-8 text-xs font-mono"
+                          />
+                        </div>
+                      </div>
+                      <div className="text-[11px] text-white/50 pt-1">
+                        Chance ratio:{" "}
+                        <span className="text-white font-semibold">
+                          {(
+                            ((settings.nonTransparentWeight ?? 50) /
+                              ((settings.nonTransparentWeight ?? 50) + (settings.transparentWeight ?? 50))) *
+                            100
+                          ).toFixed(1)}
+                          %
+                        </span>{" "}
+                        Non-Transparent vs{" "}
+                        <span className="text-red-400 font-semibold">
+                          {(
+                            ((settings.transparentWeight ?? 50) /
+                              ((settings.nonTransparentWeight ?? 50) + (settings.transparentWeight ?? 50))) *
+                            100
+                          ).toFixed(1)}
+                          %
+                        </span>{" "}
+                        Transparent
+                      </div>
+                    </div>
+
+                    <div className="rounded-xl border border-white/10 bg-white/5 p-3 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <p className="text-xs font-semibold text-red-400">Stage 2: Brand Odds (Relative Weights)</p>
+                        <span className="text-[10px] text-red-200/70 font-mono">Live Win Chance</span>
+                      </div>
+                      <div className="max-h-52 overflow-y-auto space-y-2 pr-1">
+                        {(() => {
+                          const eligibleBrands = brands.filter(
+                            (brand) =>
+                              (brand.status ?? "available") === "available" &&
+                              !/\b(battery|batteries|device|devices|mod|mods|kit|kits)\b/i.test(brand.name)
+                          );
+                          const totalBrandWeight = eligibleBrands.reduce(
+                            (sum, b) => sum + (settings.brandWeights?.[b.id] ?? 100),
+                            0
+                          );
+
+                          return eligibleBrands.map((brand) => {
+                            const currentWeight = settings.brandWeights?.[brand.id] ?? 100;
+                            const percent = totalBrandWeight > 0 ? ((currentWeight / totalBrandWeight) * 100).toFixed(1) : "0.0";
+                            return (
+                              <div key={brand.id} className="flex items-center justify-between gap-3 text-xs p-1.5 rounded-lg bg-black/20 border border-white/5">
+                                <div className="truncate max-w-[150px]">
+                                  <span className="text-white font-medium block truncate">{brand.name}</span>
+                                  <span className="text-[10px] text-red-400 font-mono font-semibold">{percent}% win chance</span>
+                                </div>
+                                <div className="flex items-center gap-1.5">
+                                  <span className="text-[10px] text-white/50">Weight:</span>
+                                  <Input
+                                    type="number"
+                                    min={1}
+                                    value={currentWeight}
+                                    onChange={(e) => {
+                                      const val = Math.max(1, Number(e.target.value) || 1);
+                                      setSettings((prev) => ({
+                                        ...prev,
+                                        brandWeights: {
+                                          ...(prev.brandWeights || {}),
+                                          [brand.id]: val,
+                                        },
+                                      }));
+                                    }}
+                                    className="h-7 w-16 text-xs text-center font-mono"
+                                  />
+                                </div>
+                              </div>
+                            );
+                          });
+                        })()}
+                      </div>
+                    </div>
+                  </div>
+                </Card>
+              </div>
+
+              {/* Tickets Audit & Live Log Table */}
+              <Card className="p-5">
+                <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between mb-4">
+                  <div>
+                    <h3 className="text-lg font-bold text-white">Issued Reward Spin Tickets</h3>
+                    <p className="text-xs text-white/60">Complete audit log of all generated roulette vouchers and claimed pod flavors.</p>
+                  </div>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-sm">
+                    <thead>
+                      <tr className="border-b border-white/10 text-xs uppercase text-white/50">
+                        <th className="py-2.5 px-3">Ticket Code</th>
+                        <th className="py-2.5 px-3">Customer</th>
+                        <th className="py-2.5 px-3">Status</th>
+                        <th className="py-2.5 px-3">Prize Claimed</th>
+                        <th className="py-2.5 px-3">Issued Date</th>
+                        <th className="py-2.5 px-3 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/5">
+                      {spinTickets.map((ticket) => (
+                        <tr key={ticket.id} className="hover:bg-white/[0.02]">
+                          <td className="py-3 px-3 font-mono font-medium text-red-400">
+                            {ticket.code}
+                          </td>
+                          <td className="py-3 px-3 text-white font-medium">
+                            {ticket.customerName}
+                          </td>
+                          <td className="py-3 px-3">
+                            <Badge
+                              className={
+                                ticket.status === "claimed"
+                                  ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
+                                  : ticket.status === "expired"
+                                  ? "border-rose-500/40 bg-rose-500/10 text-rose-300"
+                                  : "border-amber-500/40 bg-amber-500/10 text-amber-300"
+                              }
+                            >
+                              {ticket.status.toUpperCase()}
+                            </Badge>
+                          </td>
+                          <td className="py-3 px-3 text-xs text-white/80">
+                            {ticket.status === "claimed" ? (
+                              <div>
+                                <span className="font-semibold text-white">{ticket.brandWonName}</span>
+                                <span className="text-red-400"> · {ticket.flavorWonName}</span>
+                                <p className="text-[10px] text-white/40">{ticket.categoryWon}</p>
+                              </div>
+                            ) : (
+                              <span className="text-white/40 italic">Not yet spun</span>
+                            )}
+                          </td>
+                          <td className="py-3 px-3 text-xs text-white/60">
+                            {new Date(ticket.createdAt).toLocaleDateString("en-US", {
+                              month: "short",
+                              day: "numeric",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
+                          </td>
+                          <td className="py-3 px-3 text-right">
+                            <div className="flex items-center justify-end gap-1.5">
+                              {ticket.status === "pending" && (
+                                <Button
+                                  variant="ghost"
+                                  className="h-8 px-2 py-1 text-xs gap-1 text-red-400 hover:text-white"
+                                  onClick={() => {
+                                    const spinUrl = `${window.location.origin}/spin?code=${ticket.code}`;
+                                    navigator.clipboard.writeText(spinUrl);
+                                    toast.success(`Copied link for ${ticket.code}`);
+                                  }}
+                                >
+                                  <Copy className="h-3.5 w-3.5" />
+                                  Copy Link
+                                </Button>
+                              )}
+                              <Button
+                                variant="ghost"
+                                className="h-8 px-2 py-1 text-xs gap-1 text-white/60 hover:text-white"
+                                onClick={() => {
+                                  window.open(`/spin?code=${ticket.code}`, "_blank");
+                                }}
+                              >
+                                <ExternalLink className="h-3.5 w-3.5" />
+                              </Button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                      {!spinTickets.length && (
+                        <tr>
+                          <td colSpan={6} className="py-8 text-center text-sm text-white/50">
+                            No spin tickets issued yet. Select an eligible customer above to generate one!
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </Card>
+            </div>
+          )}
+
+          {/* ========================================================================= */}
+          {/* ANALYTICS SECTION */}
+          {/* ========================================================================= */}
           {active === "Analytics" && (
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="grid gap-4 xl:grid-cols-2">
-              <Card>
+              <Card className="p-4">
                 <h3 className="mb-3 font-semibold">Daily Sales</h3>
                 <div className="h-64">
                   <ResponsiveContainer width="100%" height="100%">
@@ -764,23 +2499,31 @@ export function AdminDashboard() {
                       <XAxis dataKey="name" stroke="#cbd5e1" />
                       <YAxis stroke="#cbd5e1" />
                       <Tooltip />
-                      <Bar dataKey="value">{chartData.byDay.map((entry, index) => <Cell key={entry.name} fill={CHART_COLORS[index % CHART_COLORS.length]} />)}</Bar>
+                      <Bar dataKey="value">
+                        {chartData.byDay.map((entry, index) => (
+                          <Cell key={entry.name} fill={CHART_COLORS[index % CHART_COLORS.length]} />
+                        ))}
+                      </Bar>
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
               </Card>
-              <Card>
+              <Card className="p-4">
                 <h3 className="mb-3 font-semibold">Top Selling Brands</h3>
                 <div className="h-64">
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
-                      <Pie data={chartData.byBrand} dataKey="value" nameKey="name">{chartData.byBrand.map((entry, index) => <Cell key={entry.name} fill={CHART_COLORS[index % CHART_COLORS.length]} />)}</Pie>
+                      <Pie data={chartData.byBrand} dataKey="value" nameKey="name">
+                        {chartData.byBrand.map((entry, index) => (
+                          <Cell key={entry.name} fill={CHART_COLORS[index % CHART_COLORS.length]} />
+                        ))}
+                      </Pie>
                       <Tooltip />
                     </PieChart>
                   </ResponsiveContainer>
                 </div>
               </Card>
-              <Card>
+              <Card className="p-4">
                 <h3 className="mb-3 font-semibold">Top Selling Flavors</h3>
                 <div className="h-64">
                   <ResponsiveContainer width="100%" height="100%">
@@ -789,12 +2532,16 @@ export function AdminDashboard() {
                       <XAxis dataKey="name" stroke="#cbd5e1" />
                       <YAxis stroke="#cbd5e1" />
                       <Tooltip />
-                      <Bar dataKey="value">{chartData.byFlavor.map((entry, index) => <Cell key={entry.name} fill={CHART_COLORS[index % CHART_COLORS.length]} />)}</Bar>
+                      <Bar dataKey="value">
+                        {chartData.byFlavor.map((entry, index) => (
+                          <Cell key={entry.name} fill={CHART_COLORS[index % CHART_COLORS.length]} />
+                        ))}
+                      </Bar>
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
               </Card>
-              <Card>
+              <Card className="p-4">
                 <h3 className="mb-3 font-semibold">Most Loyal Customers</h3>
                 <div className="h-64">
                   <ResponsiveContainer width="100%" height="100%">
@@ -803,7 +2550,11 @@ export function AdminDashboard() {
                       <XAxis type="number" stroke="#cbd5e1" />
                       <YAxis type="category" dataKey="name" stroke="#cbd5e1" width={120} />
                       <Tooltip />
-                      <Bar dataKey="value">{chartData.loyalty.map((entry, index) => <Cell key={entry.name} fill={CHART_COLORS[index % CHART_COLORS.length]} />)}</Bar>
+                      <Bar dataKey="value">
+                        {chartData.loyalty.map((entry, index) => (
+                          <Cell key={entry.name} fill={CHART_COLORS[index % CHART_COLORS.length]} />
+                        ))}
+                      </Bar>
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
@@ -811,51 +2562,106 @@ export function AdminDashboard() {
             </motion.div>
           )}
 
+          {/* ========================================================================= */}
+          {/* REPORTS SECTION */}
+          {/* ========================================================================= */}
           {active === "Reports" && (
-            <Card className="space-y-3">
+            <Card className="space-y-3 p-5">
               <h3 className="text-lg font-bold">Export Reports</h3>
               <p className="text-sm text-white/80">Generate daily, weekly, and monthly reports in Excel format.</p>
               <div className="flex flex-wrap gap-2">
-                <Button onClick={() => {
-                  const now = Date.now();
-                  const rows = [["Type", "Sales", "Revenue", "Redeemed"]];
-                  const daily = sales.filter((s) => now - s.createdAt <= 24 * 60 * 60 * 1000);
-                  rows.push(["Daily", `${daily.length}`, `${daily.reduce((sum, s) => sum + s.amount, 0)}`, `${claims.filter((c) => now - c.createdAt <= 24 * 60 * 60 * 1000).length}`]);
-                  exportWorkbook("daily-report", rows);
-                }}>Daily Report</Button>
-                <Button onClick={() => {
-                  const now = Date.now();
-                  const rows = [["Type", "Sales", "Revenue", "Redeemed"]];
-                  const weekly = sales.filter((s) => now - s.createdAt <= 7 * 24 * 60 * 60 * 1000);
-                  rows.push(["Weekly", `${weekly.length}`, `${weekly.reduce((sum, s) => sum + s.amount, 0)}`, `${claims.filter((c) => now - c.createdAt <= 7 * 24 * 60 * 60 * 1000).length}`]);
-                  exportWorkbook("weekly-report", rows);
-                }}>Weekly Report</Button>
-                <Button onClick={() => {
-                  const now = Date.now();
-                  const rows = [["Type", "Sales", "Revenue", "Redeemed"]];
-                  const monthly = sales.filter((s) => now - s.createdAt <= 30 * 24 * 60 * 60 * 1000);
-                  rows.push(["Monthly", `${monthly.length}`, `${monthly.reduce((sum, s) => sum + s.amount, 0)}`, `${claims.filter((c) => now - c.createdAt <= 30 * 24 * 60 * 60 * 1000).length}`]);
-                  exportWorkbook("monthly-report", rows);
-                }}>Monthly Report</Button>
+                <Button
+                  onClick={() => {
+                    const now = Date.now();
+                    const rows = [["Type", "Sales", "Revenue", "Redeemed"]];
+                    const daily = sales.filter((s) => now - s.createdAt <= 24 * 60 * 60 * 1000);
+                    rows.push([
+                      "Daily",
+                      `${daily.length}`,
+                      `${daily.reduce((sum, s) => sum + s.amount, 0)}`,
+                      `${claims.filter((c) => now - c.createdAt <= 24 * 60 * 60 * 1000).length}`,
+                    ]);
+                    exportWorkbook("daily-report", rows);
+                  }}
+                >
+                  Daily Report
+                </Button>
+                <Button
+                  onClick={() => {
+                    const now = Date.now();
+                    const rows = [["Type", "Sales", "Revenue", "Redeemed"]];
+                    const weekly = sales.filter((s) => now - s.createdAt <= 7 * 24 * 60 * 60 * 1000);
+                    rows.push([
+                      "Weekly",
+                      `${weekly.length}`,
+                      `${weekly.reduce((sum, s) => sum + s.amount, 0)}`,
+                      `${claims.filter((c) => now - c.createdAt <= 7 * 24 * 60 * 60 * 1000).length}`,
+                    ]);
+                    exportWorkbook("weekly-report", rows);
+                  }}
+                >
+                  Weekly Report
+                </Button>
+                <Button
+                  onClick={() => {
+                    const now = Date.now();
+                    const rows = [["Type", "Sales", "Revenue", "Redeemed"]];
+                    const monthly = sales.filter((s) => now - s.createdAt <= 30 * 24 * 60 * 60 * 1000);
+                    rows.push([
+                      "Monthly",
+                      `${monthly.length}`,
+                      `${monthly.reduce((sum, s) => sum + s.amount, 0)}`,
+                      `${claims.filter((c) => now - c.createdAt <= 30 * 24 * 60 * 60 * 1000).length}`,
+                    ]);
+                    exportWorkbook("monthly-report", rows);
+                  }}
+                >
+                  Monthly Report
+                </Button>
               </div>
             </Card>
           )}
 
+          {/* ========================================================================= */}
+          {/* SETTINGS SECTION */}
+          {/* ========================================================================= */}
           {active === "Settings" && (
-            <Card className="space-y-3">
+            <Card className="space-y-3 p-5">
               <h3 className="text-lg font-bold">Store Settings</h3>
               <div className="space-y-1">
-                <label className="text-sm font-medium" htmlFor="pod-price">Pod price</label>
-                <Input id="pod-price" type="number" min={1} placeholder="Price charged for one pod" value={settings.podPrice} onChange={(e) => setSettings((s) => ({ ...s, podPrice: Number(e.target.value) }))} />
+                <label className="text-sm font-medium" htmlFor="pod-price">
+                  Pod price
+                </label>
+                <Input
+                  id="pod-price"
+                  type="number"
+                  min={1}
+                  placeholder="Price charged for one pod"
+                  value={settings.podPrice}
+                  onChange={(e) => setSettings((s) => ({ ...s, podPrice: Number(e.target.value) }))}
+                />
               </div>
               <div className="space-y-1">
-                <label className="text-sm font-medium" htmlFor="low-stock-default">Default low-stock alert</label>
-                <Input id="low-stock-default" type="number" min={1} placeholder="Alert when stock reaches this amount" value={settings.lowStockDefault} onChange={(e) => setSettings((s) => ({ ...s, lowStockDefault: Number(e.target.value) }))} />
+                <label className="text-sm font-medium" htmlFor="low-stock-default">
+                  Default low-stock alert
+                </label>
+                <Input
+                  id="low-stock-default"
+                  type="number"
+                  min={1}
+                  placeholder="Alert when stock reaches this amount"
+                  value={settings.lowStockDefault}
+                  onChange={(e) => setSettings((s) => ({ ...s, lowStockDefault: Number(e.target.value) }))}
+                />
               </div>
-              <Button onClick={async () => {
-                await saveSettings(settings);
-                toast.success("Settings saved");
-              }}>Save Settings</Button>
+              <Button
+                onClick={async () => {
+                  await saveSettings(settings);
+                  toast.success("Settings saved");
+                }}
+              >
+                Save Settings
+              </Button>
             </Card>
           )}
         </main>

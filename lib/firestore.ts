@@ -19,7 +19,7 @@ import {
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { assertStockAvailable, computeRewardState } from "@/lib/reward";
-import type { Brand, Claim, Customer, Flavor, PodCategory, PurchaseItem, Sale, Settings } from "@/lib/types";
+import type { Brand, Claim, Customer, Flavor, PodCategory, PurchaseItem, Sale, Settings, SpinTicket } from "@/lib/types";
 
 const noop = () => undefined;
 const ensureDb = () => {
@@ -129,13 +129,18 @@ export async function deleteFlavor(id: string) {
   await batch.commit();
 }
 
-export async function createCustomer(payload: Omit<Customer, "id" | "items" | "totalPurchased" | "totalRedeemed">) {
+export async function createCustomer(payload: {
+  name: string;
+  totalPurchased?: number;
+  totalRedeemed?: number;
+  items?: PurchaseItem[];
+}) {
   ensureDb();
   await addDoc(collection(db!, "customers"), {
-    ...payload,
-    items: [],
-    totalPurchased: 0,
-    totalRedeemed: 0,
+    name: payload.name,
+    items: payload.items ?? [],
+    totalPurchased: payload.totalPurchased ?? 0,
+    totalRedeemed: payload.totalRedeemed ?? 0,
     createdAt: Date.now(),
   });
 }
@@ -382,5 +387,185 @@ export async function uploadImage(file: File, folder: "brands" | "flavors") {
 }
 
 export function categoryLabel(category: PodCategory) {
-  return category === "transparent" ? "Transparent Pods and Battery" : "Non-Transparent Pods and Battery";
+  return category === "transparent" ? "Transparent Pods" : "Non-Transparent Pods";
 }
+
+export function subscribeSpinTickets(callback: (tickets: SpinTicket[]) => void) {
+  if (!db) {
+    callback([]);
+    return noop;
+  }
+  return onSnapshot(
+    query(collection(db, "spinTickets"), orderBy("createdAt", "desc")),
+    (snapshot) => {
+      callback(snapshot.docs.map((d) => ({ id: d.id, ...d.data() }) as SpinTicket));
+    },
+    (err) => {
+      console.warn("spinTickets subscription error:", err);
+      callback([]);
+    },
+  );
+}
+
+export async function createSpinTicket(customerId: string, customerName: string): Promise<SpinTicket> {
+  ensureDb();
+  const randomSuffix = Math.random().toString(36).substring(2, 8).toUpperCase();
+  const code = `KPH-${randomSuffix}`;
+  const payload: Omit<SpinTicket, "id"> = {
+    code,
+    customerId,
+    customerName,
+    status: "pending",
+    createdAt: Date.now(),
+  };
+  const docRef = await addDoc(collection(db!, "spinTickets"), payload);
+  return { id: docRef.id, ...payload };
+}
+
+export async function updateSpinTicketProgress(
+  ticketId: string,
+  progress: {
+    categoryWon?: PodCategory;
+    brandWonId?: string;
+    brandWonName?: string;
+  },
+) {
+  ensureDb();
+  const ticketRef = doc(db!, "spinTickets", ticketId);
+  await runTransaction(db!, async (transaction) => {
+    const snap = await transaction.get(ticketRef);
+    if (!snap.exists()) throw new Error("Ticket not found.");
+    const ticket = { id: snap.id, ...snap.data() } as SpinTicket;
+    if (ticket.status !== "pending") {
+      throw new Error("Ticket is already claimed or expired.");
+    }
+    // Immutable outcome protection: prevent re-spinning or tampering if already set
+    if (progress.categoryWon && ticket.categoryWon && ticket.categoryWon !== progress.categoryWon) {
+      throw new Error("Category outcome is already locked.");
+    }
+    if (progress.brandWonId && ticket.brandWonId && ticket.brandWonId !== progress.brandWonId) {
+      throw new Error("Brand outcome is already locked.");
+    }
+    transaction.update(ticketRef, progress);
+  });
+}
+
+export async function getSpinTicket(codeOrId: string): Promise<SpinTicket | null> {
+  if (!db) return null;
+  const cleaned = codeOrId.trim().toUpperCase();
+  const q = query(collection(db, "spinTickets"), where("code", "==", cleaned));
+  const snap = await getDocs(q);
+  if (!snap.empty) {
+    const d = snap.docs[0];
+    return { id: d.id, ...d.data() } as SpinTicket;
+  }
+  const directDoc = await getDoc(doc(db, "spinTickets", codeOrId.trim()));
+  if (directDoc.exists()) {
+    return { id: directDoc.id, ...directDoc.data() } as SpinTicket;
+  }
+  return null;
+}
+
+export async function claimSpinTicket(params: {
+  ticketId: string;
+  categoryWon: PodCategory;
+  brandId: string;
+  flavorId: string;
+}): Promise<{ flavorName: string; brandName: string; customerName: string }> {
+  ensureDb();
+  const ticketRef = doc(db!, "spinTickets", params.ticketId);
+  const flavorRef = doc(db!, "flavors", params.flavorId);
+  const brandRef = doc(db!, "brands", params.brandId);
+
+  return runTransaction(db!, async (transaction) => {
+    const ticketDoc = await transaction.get(ticketRef);
+    if (!ticketDoc.exists()) throw new Error("Spin ticket not found.");
+    const ticket = { id: ticketDoc.id, ...ticketDoc.data() } as SpinTicket;
+    if (ticket.status !== "pending") throw new Error("This spin ticket has already been claimed.");
+
+    const customerRef = doc(db!, "customers", ticket.customerId);
+    const customerDoc = await transaction.get(customerRef);
+    if (!customerDoc.exists()) throw new Error("Customer not found.");
+    const customer = { id: customerDoc.id, ...customerDoc.data() } as Customer;
+
+    const brandDoc = await transaction.get(brandRef);
+    if (!brandDoc.exists()) throw new Error("Brand not found.");
+    const brand = { id: brandDoc.id, ...brandDoc.data() } as Brand;
+
+    const flavorDoc = await transaction.get(flavorRef);
+    if (!flavorDoc.exists()) throw new Error("Flavor not found.");
+    const flavor = { id: flavorDoc.id, ...flavorDoc.data() } as Flavor;
+
+    // Security & Integrity Checks
+    const isBattery = (name: string) => /\b(battery|batteries|device|devices|mod|mods|kit|kits)\b/i.test(name);
+    if (isBattery(brand.name) || isBattery(flavor.name)) {
+      throw new Error("Batteries and device hardware are excluded from free pod redemptions.");
+    }
+
+    if ((brand.status ?? "available") !== "available") {
+      throw new Error("This brand is currently unavailable for rewards.");
+    }
+
+    if (flavor.brandId !== brand.id && flavor.brandId !== brandDoc.id && flavor.brandId !== params.brandId) {
+      throw new Error("Selected flavor does not belong to the won brand.");
+    }
+
+    if (brand.category !== params.categoryWon) {
+      throw new Error("Brand category does not match the won category.");
+    }
+
+    if (ticket.brandWonId && ticket.brandWonId !== brand.id && ticket.brandWonId !== brandDoc.id && ticket.brandWonId !== params.brandId) {
+      throw new Error("Selected brand does not match your spun reward brand.");
+    }
+
+    if (flavor.stock < 1) {
+      throw new Error(`Sorry! ${flavor.name} just ran out of stock. Please select another flavor.`);
+    }
+
+    const newStock = Math.max(0, flavor.stock - 1);
+    const inventoryRef = doc(db!, "inventory", params.flavorId);
+
+    // Update stock and inventory mirror atomically
+    transaction.update(flavorRef, { stock: newStock });
+    transaction.set(inventoryRef, {
+      flavorId: params.flavorId,
+      flavorName: flavor.name,
+      stock: newStock,
+      updatedAt: serverTimestamp(),
+    });
+
+    // Synchronize customer reward counters & milestone progress
+    const updatedRedeemed = (customer.totalRedeemed || 0) + 1;
+    const updatedReward = computeRewardState(customer.totalPurchased || 0, updatedRedeemed);
+    transaction.update(customerRef, {
+      totalRedeemed: updatedRedeemed,
+      claimableRewards: updatedReward.claimable,
+      rewardProgress: updatedReward.progress,
+    });
+
+    // Record official Claim voucher
+    const claimRef = doc(collection(db!, "claims"));
+    transaction.set(claimRef, {
+      customerId: ticket.customerId,
+      customerName: customer.name,
+      flavorId: flavor.id,
+      flavorName: `${brand.name} - ${flavor.name}`,
+      quantity: 1,
+      createdAt: Date.now(),
+    });
+
+    // Finalize ticket status to claimed
+    transaction.update(ticketRef, {
+      status: "claimed",
+      categoryWon: params.categoryWon,
+      brandWonId: brand.id,
+      brandWonName: brand.name,
+      flavorWonId: flavor.id,
+      flavorWonName: flavor.name,
+      claimedAt: Date.now(),
+    });
+
+    return { flavorName: flavor.name, brandName: brand.name, customerName: customer.name };
+  });
+}
+
