@@ -83,7 +83,7 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import { Progress } from "@/components/ui/progress";
 import { toast } from "sonner";
 
-const sections = ["Dashboard", "Products", "Inventory", "Customers", "Sales", "Roulette", "Analytics", "Reports", "Settings"] as const;
+const sections = ["Dashboard", "Products & Inventory", "Customers", "Sales", "Roulette", "Analytics", "Reports", "Settings"] as const;
 type Section = (typeof sections)[number];
 const CHART_COLORS = ["#dc2626", "#ef4444", "#ffffff", "#71717a", "#b91c1c", "#fca5a5", "#27272a"];
 const BRAND_PLACEHOLDER = "/placeholder-brand-1.svg";
@@ -134,20 +134,15 @@ export function AdminDashboard() {
   const [settings, setSettings] = useState<Settings>({ id: "default", lowStockDefault: 10, podPrice: 350 });
   const [globalSearch, setGlobalSearch] = useState("");
 
-  // Product Section States
-  const [selectedProductBrandId, setSelectedProductBrandId] = useState<string | null>(null);
+  // Products & Inventory Section States
+  const [selectedBrandId, setSelectedBrandId] = useState<string | null>(null);
   const [isCreateBrandOpen, setIsCreateBrandOpen] = useState(false);
   const [isAddFlavorOpen, setIsAddFlavorOpen] = useState(false);
-  const [productBrandSearch, setProductBrandSearch] = useState("");
-  const [productCategoryFilter, setProductCategoryFilter] = useState<"all" | PodCategory>("all");
-  const [productStatusFilter, setProductStatusFilter] = useState<"all" | ProductStatus>("all");
-  const [productFlavorSearch, setProductFlavorSearch] = useState("");
-
-  // Inventory Section States
-  const [selectedInventoryBrandId, setSelectedInventoryBrandId] = useState<string | null>(null);
-  const [inventoryBrandSearch, setInventoryBrandSearch] = useState("");
-  const [inventoryStockFilter, setInventoryStockFilter] = useState<"all" | "low-stock" | "out-of-stock" | "healthy">("all");
-  const [inventoryFlavorSearch, setInventoryFlavorSearch] = useState("");
+  const [brandSearch, setBrandSearch] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState<"all" | PodCategory>("all");
+  const [statusFilter, setStatusFilter] = useState<"all" | ProductStatus>("all");
+  const [stockFilter, setStockFilter] = useState<"all" | "low-stock" | "out-of-stock" | "healthy">("all");
+  const [flavorSearch, setFlavorSearch] = useState("");
 
   // Forms and Modals States
   const [brandForm, setBrandForm] = useState({ name: "", category: "non-transparent" as PodCategory, status: "available" as ProductStatus, price: "", imageUrl: "" });
@@ -297,34 +292,8 @@ export function AdminDashboard() {
     };
   }, [globalSearch, customers, brands, flavors]);
 
-  // Filtered Brands for Products Tab
-  const filteredProductBrands = useMemo(() => {
-    return brands
-      .filter((b) => {
-        const matchesSearch = b.name.toLowerCase().includes(productBrandSearch.toLowerCase().trim());
-        const matchesCategory = productCategoryFilter === "all" || b.category === productCategoryFilter;
-        const matchesStatus = productStatusFilter === "all" || (b.status ?? "available") === productStatusFilter;
-        return matchesSearch && matchesCategory && matchesStatus;
-      })
-      .sort((a, b) => productStatusRank(a.status) - productStatusRank(b.status) || a.name.localeCompare(b.name));
-  }, [brands, productBrandSearch, productCategoryFilter, productStatusFilter]);
-
-  // Selected Brand for Products Tab
-  const activeProductBrand = useMemo(() => {
-    if (!selectedProductBrandId) return null;
-    return brands.find((b) => b.id === selectedProductBrandId) ?? null;
-  }, [brands, selectedProductBrandId]);
-
-  // Selected Brand's Flavors for Products Tab
-  const activeProductBrandFlavors = useMemo(() => {
-    if (!selectedProductBrandId) return [];
-    return flavors
-      .filter((f) => f.brandId === selectedProductBrandId && f.name.toLowerCase().includes(productFlavorSearch.toLowerCase().trim()))
-      .sort((a, b) => a.name.localeCompare(b.name));
-  }, [flavors, selectedProductBrandId, productFlavorSearch]);
-
-  // Filtered Brands for Inventory Tab
-  const inventoryBrandStats = useMemo(() => {
+  // Unified Brand Catalog & Inventory Stats
+  const brandStats = useMemo(() => {
     return brands.map((brand) => {
       const brandFlavors = flavors.filter((f) => f.brandId === brand.id);
       const totalStock = brandFlavors.reduce((sum, f) => sum + f.stock, 0);
@@ -348,38 +317,43 @@ export function AdminDashboard() {
     });
   }, [brands, flavors, settings.lowStockDefault]);
 
-  const filteredInventoryBrands = useMemo(() => {
-    return inventoryBrandStats
+  const filteredBrands = useMemo(() => {
+    return brandStats
       .filter((stat) => {
-        const matchesSearch = stat.brand.name.toLowerCase().includes(inventoryBrandSearch.toLowerCase().trim());
-        const matchesFilter =
-          inventoryStockFilter === "all" ||
-          (inventoryStockFilter === "out-of-stock" && stat.outOfStockCount > 0) ||
-          (inventoryStockFilter === "low-stock" && (stat.lowStockCount > 0 || stat.outOfStockCount > 0)) ||
-          (inventoryStockFilter === "healthy" && stat.healthStatus === "healthy");
-        return matchesSearch && matchesFilter;
+        const matchesSearch = stat.brand.name.toLowerCase().includes(brandSearch.toLowerCase().trim());
+        const matchesCategory = categoryFilter === "all" || stat.brand.category === categoryFilter;
+        const matchesStatus = statusFilter === "all" || (stat.brand.status ?? "available") === statusFilter;
+        const matchesStock =
+          stockFilter === "all" ||
+          (stockFilter === "out-of-stock" && stat.outOfStockCount > 0) ||
+          (stockFilter === "low-stock" && (stat.lowStockCount > 0 || stat.outOfStockCount > 0)) ||
+          (stockFilter === "healthy" && stat.healthStatus === "healthy");
+        return matchesSearch && matchesCategory && matchesStatus && matchesStock;
       })
       .sort((a, b) => {
-        const rankMap = { "out-of-stock": 0, "low-stock": 1, healthy: 2 };
-        const statusDiff = rankMap[a.healthStatus] - rankMap[b.healthStatus];
+        const statusDiff = productStatusRank(a.brand.status) - productStatusRank(b.brand.status);
         if (statusDiff !== 0) return statusDiff;
         return a.brand.name.localeCompare(b.brand.name);
       });
-  }, [inventoryBrandStats, inventoryBrandSearch, inventoryStockFilter]);
+  }, [brandStats, brandSearch, categoryFilter, statusFilter, stockFilter]);
 
-  const activeInventoryBrandStat = useMemo(() => {
-    if (!selectedInventoryBrandId) return null;
-    return inventoryBrandStats.find((s) => s.brand.id === selectedInventoryBrandId) ?? null;
-  }, [inventoryBrandStats, selectedInventoryBrandId]);
+  const activeBrandStat = useMemo(() => {
+    if (!selectedBrandId) return null;
+    return brandStats.find((s) => s.brand.id === selectedBrandId) ?? null;
+  }, [brandStats, selectedBrandId]);
 
-  const activeInventoryFlavors = useMemo(() => {
-    if (!selectedInventoryBrandId) return [];
+  const activeBrand = useMemo(() => {
+    return activeBrandStat?.brand ?? null;
+  }, [activeBrandStat]);
+
+  const activeBrandFlavors = useMemo(() => {
+    if (!selectedBrandId) return [];
     return flavors
-      .filter((f) => f.brandId === selectedInventoryBrandId && f.name.toLowerCase().includes(inventoryFlavorSearch.toLowerCase().trim()))
+      .filter((f) => f.brandId === selectedBrandId && f.name.toLowerCase().includes(flavorSearch.toLowerCase().trim()))
       .sort((a, b) => a.stock - b.stock || a.name.localeCompare(b.name));
-  }, [flavors, selectedInventoryBrandId, inventoryFlavorSearch]);
+  }, [flavors, selectedBrandId, flavorSearch]);
 
-  const inventorySummary = useMemo(() => {
+  const catalogSummary = useMemo(() => {
     const totalUnits = catalogFlavors.reduce((sum, f) => sum + f.stock, 0);
     const lowStockTotal = catalogFlavors.filter((f) => f.stock > 0 && f.stock <= (f.lowStockAlert || settings.lowStockDefault)).length;
     const outOfStockTotal = catalogFlavors.filter((f) => f.stock === 0).length;
@@ -527,19 +501,22 @@ export function AdminDashboard() {
           )}
 
           {/* ========================================================================= */}
-          {/* PRODUCTS SECTION (BRAND-FIRST DRILLDOWN ARCHITECTURE) */}
+          {/* PRODUCTS & INVENTORY SECTION (UNIFIED BRAND-FIRST MANAGEMENT HUB) */}
           {/* ========================================================================= */}
-          {active === "Products" && (
+          {active === "Products & Inventory" && (
             <div className="space-y-6">
-              {/* TOP LEVEL: ALL BRANDS OVERVIEW */}
-              {!selectedProductBrandId ? (
+              {/* TOP LEVEL: ALL BRANDS & STOCK OVERVIEW */}
+              {!selectedBrandId ? (
                 <>
-                  {/* Products Header & Quick Actions */}
+                  {/* Header & Primary Actions */}
                   <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                     <div>
-                      <h2 className="text-2xl font-bold">Products & Brand Catalog</h2>
+                      <h2 className="text-2xl font-bold flex items-center gap-2.5">
+                        <Layers className="h-6 w-6 text-red-500" />
+                        Products &amp; Inventory Hub
+                      </h2>
                       <p className="text-sm text-white/70">
-                        Select a brand to view flavors, edit settings, update prices, or add new flavors.
+                        Manage brand catalog, pricing, availability, and real-time stock levels all in one place.
                       </p>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
@@ -548,52 +525,80 @@ export function AdminDashboard() {
                           setBrandForm({ name: "", category: "non-transparent", status: "available", price: "", imageUrl: "" });
                           setIsCreateBrandOpen(true);
                         }}
-                        className="flex items-center gap-2"
+                        className="flex items-center gap-2 shadow-lg shadow-red-950/40"
                       >
                         <Plus className="h-4 w-4" /> Create Brand
                       </Button>
                       <Button
                         variant="outline"
                         onClick={() => {
-                          setFlavorForm({ brandId: brands[0]?.id || "", name: "", stock: "", imageUrl: "", lowStockAlert: "" });
+                          setFlavorForm({ brandId: brands[0]?.id || "", name: "", stock: "1", imageUrl: "", lowStockAlert: "" });
                           setIsAddFlavorOpen(true);
                         }}
-                        className="flex items-center gap-2"
+                        className="flex items-center gap-2 border-white/20 hover:bg-white/10"
                       >
                         <PackagePlus className="h-4 w-4" /> Add Flavor
                       </Button>
                     </div>
                   </div>
 
-                  {/* Quick Stats Banner */}
+                  {/* Summary Metric Cards */}
                   <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                    <div className="rounded-xl border border-white/10 bg-slate-900/40 p-3">
-                      <p className="text-xs text-white/60">Total Brands</p>
-                      <p className="text-xl font-bold text-white">{brands.length}</p>
+                    <div className="rounded-xl border border-white/10 bg-slate-900/40 p-4 backdrop-blur">
+                      <div className="flex items-center justify-between">
+                        <p className="text-xs text-white/60">Total Units in Stock</p>
+                        <Boxes className="h-4 w-4 text-emerald-400" />
+                      </div>
+                      <p className="mt-2 text-2xl font-bold text-white">{catalogSummary.totalUnits}</p>
+                      <p className="text-[11px] text-white/40">{brands.length} brands · {flavors.length} flavors</p>
                     </div>
-                    <div className="rounded-xl border border-white/10 bg-slate-900/40 p-3">
-                      <p className="text-xs text-white/60">Total Flavors</p>
-                      <p className="text-xl font-bold text-red-400">{flavors.length}</p>
+                    <div className="rounded-xl border border-white/10 bg-slate-900/40 p-4 backdrop-blur">
+                      <div className="flex items-center justify-between">
+                        <p className="text-xs text-white/60">Brands &amp; Flavors</p>
+                        <Package className="h-4 w-4 text-red-400" />
+                      </div>
+                      <p className="mt-2 text-2xl font-bold text-white">
+                        {brands.length} <span className="text-sm font-normal text-white/60">/ {flavors.length} flavors</span>
+                      </p>
+                      <p className="text-[11px] text-white/40">
+                        {brands.filter((b) => b.category === "transparent").length} transparent · {brands.filter((b) => b.category === "non-transparent").length} non-trans
+                      </p>
                     </div>
-                    <div className="rounded-xl border border-white/10 bg-slate-900/40 p-3">
-                      <p className="text-xs text-white/60">Non-Transparent</p>
-                      <p className="text-xl font-bold text-white">{brands.filter((b) => b.category === "non-transparent").length}</p>
+                    <div className={`rounded-xl border p-4 backdrop-blur ${
+                      catalogSummary.lowStockTotal > 0
+                        ? "border-amber-500/30 bg-amber-950/20 text-amber-200"
+                        : "border-white/10 bg-slate-900/40 text-white"
+                    }`}>
+                      <div className="flex items-center justify-between">
+                        <p className="text-xs text-white/60">Low Stock Flavors</p>
+                        <AlertTriangle className={`h-4 w-4 ${catalogSummary.lowStockTotal > 0 ? "text-amber-400" : "text-white/40"}`} />
+                      </div>
+                      <p className="mt-2 text-2xl font-bold text-amber-300">{catalogSummary.lowStockTotal}</p>
+                      <p className="text-[11px] text-white/40">Threshold &le; {settings.lowStockDefault} units</p>
                     </div>
-                    <div className="rounded-xl border border-white/10 bg-slate-900/40 p-3">
-                      <p className="text-xs text-white/60">Transparent</p>
-                      <p className="text-xl font-bold text-red-300">{brands.filter((b) => b.category === "transparent").length}</p>
+                    <div className={`rounded-xl border p-4 backdrop-blur ${
+                      catalogSummary.outOfStockTotal > 0
+                        ? "border-rose-500/30 bg-rose-950/20 text-rose-200"
+                        : "border-white/10 bg-slate-900/40 text-white"
+                    }`}>
+                      <div className="flex items-center justify-between">
+                        <p className="text-xs text-white/60">Out of Stock</p>
+                        <XCircle className={`h-4 w-4 ${catalogSummary.outOfStockTotal > 0 ? "text-rose-400" : "text-white/40"}`} />
+                      </div>
+                      <p className="mt-2 text-2xl font-bold text-rose-400">{catalogSummary.outOfStockTotal}</p>
+                      <p className="text-[11px] text-white/40">Flavors needing restock</p>
                     </div>
                   </div>
 
-                  {/* Filter & Search Bar */}
-                  <Card className="flex flex-wrap items-center justify-between gap-3 p-3">
+                  {/* Filter & Search Controls */}
+                  <Card className="flex flex-wrap items-center justify-between gap-3 p-3 bg-neutral-900/60 border-white/10">
                     <div className="relative min-w-[240px] flex-1">
                       <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-white/50" />
                       <Input
-                        value={productBrandSearch}
-                        onChange={(e) => setProductBrandSearch(e.target.value)}
+                        value={brandSearch}
+                        onChange={(e) => setBrandSearch(e.target.value)}
                         placeholder="Search brands by name..."
-                        className="pl-9"
+                        className="pl-9 bg-black/40 border-white/10"
                       />
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
@@ -601,18 +606,18 @@ export function AdminDashboard() {
                         <Filter className="h-3.5 w-3.5" /> Filter:
                       </div>
                       <select
-                        className="h-10 rounded-xl border border-white/10 bg-white/5 px-3 text-sm text-white focus:outline-none"
-                        value={productCategoryFilter}
-                        onChange={(e) => setProductCategoryFilter(e.target.value as "all" | PodCategory)}
+                        className="h-10 rounded-xl border border-white/10 bg-black/40 px-3 text-sm text-white focus:outline-none"
+                        value={categoryFilter}
+                        onChange={(e) => setCategoryFilter(e.target.value as "all" | PodCategory)}
                       >
                         <option value="all">All Categories</option>
                         <option value="non-transparent">Non-Transparent</option>
                         <option value="transparent">Transparent</option>
                       </select>
                       <select
-                        className="h-10 rounded-xl border border-white/10 bg-white/5 px-3 text-sm text-white focus:outline-none"
-                        value={productStatusFilter}
-                        onChange={(e) => setProductStatusFilter(e.target.value as "all" | ProductStatus)}
+                        className="h-10 rounded-xl border border-white/10 bg-black/40 px-3 text-sm text-white focus:outline-none"
+                        value={statusFilter}
+                        onChange={(e) => setStatusFilter(e.target.value as "all" | ProductStatus)}
                       >
                         <option value="all">All Statuses</option>
                         {Object.entries(PRODUCT_STATUS_LABELS).map(([val, label]) => (
@@ -621,13 +626,22 @@ export function AdminDashboard() {
                           </option>
                         ))}
                       </select>
+                      <select
+                        className="h-10 rounded-xl border border-white/10 bg-black/40 px-3 text-sm text-white focus:outline-none"
+                        value={stockFilter}
+                        onChange={(e) => setStockFilter(e.target.value as "all" | "low-stock" | "out-of-stock" | "healthy")}
+                      >
+                        <option value="all">All Stock Health</option>
+                        <option value="healthy">Healthy Only</option>
+                        <option value="low-stock">Low Stock Alerts</option>
+                        <option value="out-of-stock">Out of Stock Only</option>
+                      </select>
                     </div>
                   </Card>
 
-                  {/* Brand Cards Grid */}
+                  {/* Unified Brand Cards Grid */}
                   <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                    {filteredProductBrands.map((brand) => {
-                      const brandFlavors = flavors.filter((f) => f.brandId === brand.id);
+                    {filteredBrands.map(({ brand, flavorsCount, totalStock, outOfStockCount, lowStockCount, healthyCount, healthStatus }) => {
                       const status = brand.status ?? "available";
                       const statusBadgeColor =
                         status === "available"
@@ -635,6 +649,13 @@ export function AdminDashboard() {
                           : status === "coming-soon"
                             ? "bg-amber-500/20 text-amber-300 border-amber-500/30"
                             : "bg-rose-500/20 text-rose-300 border-rose-500/30";
+
+                      const healthBadge =
+                        healthStatus === "out-of-stock"
+                          ? { label: "Out of Stock", class: "bg-rose-500/20 text-rose-300 border-rose-500/30" }
+                          : healthStatus === "low-stock"
+                            ? { label: "Low Stock", class: "bg-amber-500/20 text-amber-300 border-amber-500/30" }
+                            : { label: "Healthy", class: "bg-emerald-500/20 text-emerald-300 border-emerald-500/30" };
 
                       return (
                         <motion.div
@@ -644,9 +665,12 @@ export function AdminDashboard() {
                         >
                           <div>
                             {/* Card Top Badges */}
-                            <div className="mb-3 flex items-center justify-between gap-2">
-                              <Badge className={statusBadgeColor}>{PRODUCT_STATUS_LABELS[status]}</Badge>
-                              <Badge className="border-white/15 bg-white/5 text-xs text-white/80">
+                            <div className="mb-3 flex flex-wrap items-center justify-between gap-1.5">
+                              <div className="flex items-center gap-1.5">
+                                <Badge className={statusBadgeColor}>{PRODUCT_STATUS_LABELS[status]}</Badge>
+                                <Badge className={healthBadge.class}>{healthBadge.label}</Badge>
+                              </div>
+                              <Badge className="border-white/15 bg-white/5 text-[11px] text-white/80">
                                 {brand.category === "transparent" ? "Transparent" : "Non-Transparent"}
                               </Badge>
                             </div>
@@ -660,13 +684,38 @@ export function AdminDashboard() {
                               />
                             </div>
 
-                            {/* Brand Info */}
+                            {/* Brand Info & Pricing */}
                             <div className="space-y-1">
-                              <h3 className="text-lg font-bold text-white group-hover:text-red-400">{brand.name}</h3>
-                              <p className="text-sm font-medium text-emerald-400">{toCurrency(brand.price ?? settings.podPrice)}</p>
-                              <div className="flex items-center gap-1.5 text-xs text-white/60">
-                                <Boxes className="h-3.5 w-3.5 text-red-400" />
-                                <span>{brandFlavors.length} Flavor{brandFlavors.length === 1 ? "" : "s"}</span>
+                              <h3 className="text-lg font-bold text-white group-hover:text-red-400 transition">{brand.name}</h3>
+                              <p className="text-sm font-semibold text-emerald-400">{toCurrency(brand.price ?? settings.podPrice)} <span className="text-xs font-normal text-white/50">/ pod</span></p>
+
+                              {/* Inventory Metrics Row */}
+                              <div className="mt-2.5 rounded-lg border border-white/5 bg-black/30 p-2 text-xs">
+                                <div className="flex items-center justify-between text-white/70">
+                                  <span className="flex items-center gap-1">
+                                    <Boxes className="h-3 w-3 text-red-400" /> {flavorsCount} Flavor{flavorsCount === 1 ? "" : "s"}
+                                  </span>
+                                  <span className="font-semibold text-white">
+                                    {totalStock} <span className="text-white/50 font-normal">units</span>
+                                  </span>
+                                </div>
+                                {(lowStockCount > 0 || outOfStockCount > 0) && (
+                                  <div className="mt-1 flex items-center gap-2 border-t border-white/5 pt-1 text-[11px]">
+                                    {lowStockCount > 0 && (
+                                      <span className="text-amber-400 font-medium">
+                                        ⚠ {lowStockCount} Low
+                                      </span>
+                                    )}
+                                    {outOfStockCount > 0 && (
+                                      <span className="text-rose-400 font-medium">
+                                        ✕ {outOfStockCount} OOS
+                                      </span>
+                                    )}
+                                    <span className="ml-auto text-emerald-400/80">
+                                      {healthyCount} OK
+                                    </span>
+                                  </div>
+                                )}
                               </div>
                             </div>
                           </div>
@@ -675,12 +724,12 @@ export function AdminDashboard() {
                           <div className="mt-4 pt-3 border-t border-white/10 flex items-center gap-2">
                             <Button
                               onClick={() => {
-                                setSelectedProductBrandId(brand.id);
-                                setProductFlavorSearch("");
+                                setSelectedBrandId(brand.id);
+                                setFlavorSearch("");
                               }}
-                              className="w-full flex items-center justify-center gap-1.5 text-xs"
+                              className="w-full flex items-center justify-center gap-1.5 text-xs bg-red-600/90 hover:bg-red-600 shadow-md shadow-red-950/50"
                             >
-                              Manage Brand <ChevronRight className="h-3.5 w-3.5" />
+                              Manage Brand &amp; Stock <ChevronRight className="h-3.5 w-3.5" />
                             </Button>
                           </div>
                         </motion.div>
@@ -688,7 +737,7 @@ export function AdminDashboard() {
                     })}
                   </div>
 
-                  {!filteredProductBrands.length && (
+                  {!filteredBrands.length && (
                     <Card className="p-8 text-center">
                       <Package className="mx-auto mb-3 h-10 w-10 text-white/40" />
                       <p className="text-base font-semibold">No brands found</p>
@@ -699,38 +748,47 @@ export function AdminDashboard() {
                   )}
                 </>
               ) : (
-                /* DRILLDOWN LEVEL: SELECTED BRAND DETAILS & FLAVORS SETTINGS */
-                activeProductBrand && (
+                /* DRILLDOWN LEVEL: SELECTED BRAND DETAILS & FLAVOR STOCK MANAGER */
+                activeBrand && activeBrandStat && (
                   <div className="space-y-6">
                     {/* Navigation Breadcrumb */}
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <Button
                         variant="outline"
                         onClick={() => {
-                          setSelectedProductBrandId(null);
+                          setSelectedBrandId(null);
                           setEditingBrand(null);
                         }}
-                        className="flex items-center gap-2"
+                        className="flex items-center gap-2 border-white/20 hover:bg-white/10"
                       >
-                        <ArrowLeft className="h-4 w-4" /> Back to All Brands
+                        <ArrowLeft className="h-4 w-4" /> Back to Products &amp; Inventory
                       </Button>
                       <div className="flex flex-wrap gap-2">
                         <Button
                           variant="outline"
                           onClick={() => {
-                            setFlavorForm({ brandId: activeProductBrand.id, name: "", stock: "1", imageUrl: "", lowStockAlert: "" });
+                            setFlavorForm({ brandId: activeBrand.id, name: "", stock: "1", imageUrl: "", lowStockAlert: "" });
                             setIsAddFlavorOpen(true);
                           }}
-                          className="flex items-center gap-2"
+                          className="flex items-center gap-2 border-red-500/30 text-red-200 hover:bg-red-500/10"
                         >
-                          <Plus className="h-4 w-4" /> Add Flavor to {activeProductBrand.name}
+                          <Plus className="h-4 w-4" /> Add Flavor to {activeBrand.name}
+                        </Button>
+                        <Button
+                          onClick={() => {
+                            activeBrandFlavors.forEach((f) => updateFlavor(f.id, { stock: f.stock + 5 }));
+                            toast.success(`Added +5 stock to all ${activeBrand.name} flavors`);
+                          }}
+                          className="flex items-center gap-2 bg-emerald-700 hover:bg-emerald-600 text-white shadow-md shadow-emerald-950/50"
+                        >
+                          <RefreshCw className="h-4 w-4" /> Restock All Flavors (+5)
                         </Button>
                       </div>
                     </div>
 
                     {/* Brand Banner & Settings */}
-                    <Card className="border-red-500/20 bg-slate-900/70 p-6">
-                      {editingBrand?.id === activeProductBrand.id ? (
+                    <Card className="border-red-500/20 bg-slate-900/70 p-6 backdrop-blur">
+                      {editingBrand?.id === activeBrand.id ? (
                         /* Edit Brand Form */
                         <div className="space-y-4">
                           <div className="flex items-center justify-between">
@@ -821,7 +879,7 @@ export function AdminDashboard() {
                               disabled={editingBrandUploading || !editingBrand.name.trim()}
                               onClick={async () => {
                                 try {
-                                  await updateBrand(activeProductBrand.id, {
+                                  await updateBrand(activeBrand.id, {
                                     name: editingBrand.name.trim(),
                                     price: editingBrand.price || settings.podPrice,
                                     category: editingBrand.category,
@@ -829,13 +887,13 @@ export function AdminDashboard() {
                                     imageUrl: editingBrand.imageUrl || BRAND_PLACEHOLDER,
                                   });
                                   setEditingBrand(null);
-                                  toast.success("Brand settings saved");
+                                  toast.success("Brand settings updated");
                                 } catch (error) {
                                   toast.error(error instanceof Error ? error.message : "Could not update brand");
                                 }
                               }}
                             >
-                              Save Brand Settings
+                              Save Changes
                             </Button>
                             <Button variant="outline" onClick={() => setEditingBrand(null)}>
                               Cancel
@@ -843,64 +901,86 @@ export function AdminDashboard() {
                           </div>
                         </div>
                       ) : (
-                        /* Brand Overview View */
-                        <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
+                        /* Read-only Brand Details Banner with Stock Metrics */
+                        <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
                           <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
-                            <div className="h-28 w-28 shrink-0 overflow-hidden rounded-2xl border border-white/10 bg-black/40 p-2 shadow-inner">
-                              <ProductImage src={activeProductBrand.imageUrl} alt={activeProductBrand.name} className="h-full w-full object-contain" />
+                            <div className="h-28 w-28 shrink-0 overflow-hidden rounded-2xl border border-white/10 bg-black/40 p-2">
+                              <ProductImage
+                                src={activeBrand.imageUrl}
+                                alt={activeBrand.name}
+                                className="h-full w-full object-contain"
+                              />
                             </div>
-                            <div className="space-y-1">
+                            <div className="space-y-1.5">
                               <div className="flex flex-wrap items-center gap-2">
-                                <h2 className="text-2xl font-bold">{activeProductBrand.name}</h2>
+                                <h2 className="text-2xl font-bold text-white">{activeBrand.name}</h2>
                                 <Badge
                                   className={
-                                    (activeProductBrand.status ?? "available") === "available"
+                                    (activeBrand.status ?? "available") === "available"
                                       ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/30"
-                                      : (activeProductBrand.status ?? "available") === "coming-soon"
+                                      : (activeBrand.status ?? "available") === "coming-soon"
                                         ? "bg-amber-500/20 text-amber-300 border-amber-500/30"
                                         : "bg-rose-500/20 text-rose-300 border-rose-500/30"
                                   }
                                 >
-                                  {PRODUCT_STATUS_LABELS[activeProductBrand.status ?? "available"]}
+                                  {PRODUCT_STATUS_LABELS[activeBrand.status ?? "available"]}
                                 </Badge>
-                                <Badge className="border-white/15 bg-white/5 text-white/80">
-                                  {activeProductBrand.category === "transparent" ? "Transparent" : "Non-Transparent"}
+                                <Badge className="border-white/15 bg-white/5 text-xs text-white/80">
+                                  {activeBrand.category === "transparent" ? "Transparent" : "Non-Transparent"}
                                 </Badge>
                               </div>
                               <p className="text-lg font-semibold text-emerald-400">
-                                Price: {toCurrency(activeProductBrand.price ?? settings.podPrice)}
+                                Price: {toCurrency(activeBrand.price ?? settings.podPrice)} <span className="text-xs font-normal text-white/50">per pod</span>
                               </p>
-                              <p className="text-xs text-white/60">
-                                {activeProductBrandFlavors.length} Flavor{activeProductBrandFlavors.length === 1 ? "" : "s"} listed for this brand
-                              </p>
+
+                              {/* Live Stock Breakdown Badges */}
+                              <div className="flex flex-wrap items-center gap-2 pt-1 text-xs">
+                                <span className="rounded-md border border-white/10 bg-black/40 px-2.5 py-1 text-white/80">
+                                  Total Stock: <b className="text-white">{activeBrandStat.totalStock}</b> units
+                                </span>
+                                <span className="rounded-md border border-emerald-500/20 bg-emerald-950/30 px-2.5 py-1 text-emerald-300">
+                                  Healthy: <b>{activeBrandStat.healthyCount}</b>
+                                </span>
+                                {activeBrandStat.lowStockCount > 0 && (
+                                  <span className="rounded-md border border-amber-500/30 bg-amber-950/40 px-2.5 py-1 text-amber-300">
+                                    Low Stock: <b>{activeBrandStat.lowStockCount}</b>
+                                  </span>
+                                )}
+                                {activeBrandStat.outOfStockCount > 0 && (
+                                  <span className="rounded-md border border-rose-500/30 bg-rose-950/40 px-2.5 py-1 text-rose-300">
+                                    Out of Stock: <b>{activeBrandStat.outOfStockCount}</b>
+                                  </span>
+                                )}
+                              </div>
                             </div>
                           </div>
 
                           <div className="flex flex-wrap gap-2">
-                            <Button variant="outline" onClick={() => setEditingBrand(activeProductBrand)} className="flex items-center gap-1.5">
+                            <Button variant="outline" onClick={() => setEditingBrand(activeBrand)} className="flex items-center gap-1.5 border-white/20 hover:bg-white/10">
                               <Edit2 className="h-4 w-4" /> Edit Brand
                             </Button>
                             <Button
                               variant="outline"
                               onClick={async () => {
                                 try {
-                                  const category = activeProductBrand.category === "transparent" ? "non-transparent" : "transparent";
-                                  await updateBrand(activeProductBrand.id, { category });
+                                  const category = activeBrand.category === "transparent" ? "non-transparent" : "transparent";
+                                  await updateBrand(activeBrand.id, { category });
                                   toast.success(`Moved brand to ${category}`);
                                 } catch (error) {
                                   toast.error(error instanceof Error ? error.message : "Could not change category");
                                 }
                               }}
+                              className="border-white/20 hover:bg-white/10"
                             >
                               Toggle Category
                             </Button>
                             <Button
                               variant="danger"
                               onClick={async () => {
-                                if (confirm(`Are you sure you want to delete ${activeProductBrand.name} and all its flavors?`)) {
+                                if (confirm(`Are you sure you want to delete ${activeBrand.name} and all its flavors?`)) {
                                   try {
-                                    await deleteBrand(activeProductBrand.id);
-                                    setSelectedProductBrandId(null);
+                                    await deleteBrand(activeBrand.id);
+                                    setSelectedBrandId(null);
                                     toast.success("Brand and its flavors deleted");
                                   } catch (error) {
                                     toast.error(error instanceof Error ? error.message : "Could not delete brand");
@@ -916,221 +996,290 @@ export function AdminDashboard() {
                       )}
                     </Card>
 
-                    {/* Flavors Section for Selected Brand */}
+                    {/* Flavors & Stock Section for Selected Brand */}
                     <div className="space-y-4">
                       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                         <div className="flex items-center gap-2">
                           <Boxes className="h-5 w-5 text-red-400" />
-                          <h3 className="text-xl font-bold">Flavors of {activeProductBrand.name}</h3>
+                          <h3 className="text-xl font-bold">Flavors &amp; Stock ({activeBrand.name})</h3>
                           <Badge className="ml-1 bg-red-500/20 text-red-200 border-red-500/30">
-                            {activeProductBrandFlavors.length}
+                            {activeBrandFlavors.length}
                           </Badge>
                         </div>
                         <div className="relative min-w-[220px]">
                           <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-white/50" />
                           <Input
-                            value={productFlavorSearch}
-                            onChange={(e) => setProductFlavorSearch(e.target.value)}
+                            value={flavorSearch}
+                            onChange={(e) => setFlavorSearch(e.target.value)}
                             placeholder="Filter flavors..."
-                            className="pl-9 text-sm"
+                            className="pl-9 text-sm bg-black/40 border-white/10"
                           />
                         </div>
                       </div>
 
                       {/* Flavors Grid */}
                       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                        {activeProductBrandFlavors.map((flavor) => (
-                          <div
-                            key={flavor.id}
-                            className="flex flex-col justify-between rounded-xl border border-white/10 bg-slate-900/50 p-3 shadow backdrop-blur transition hover:border-white/20"
-                          >
-                            {editingFlavor?.id === flavor.id ? (
-                              /* Flavor Inline Editor */
-                              <div className="space-y-2">
-                                <div className="flex items-center justify-between">
-                                  <p className="text-xs font-bold text-red-400">Edit Flavor</p>
-                                  <Button variant="ghost" className="h-6 w-6 p-0" onClick={() => setEditingFlavor(null)}>
-                                    <X className="h-3.5 w-3.5" />
-                                  </Button>
-                                </div>
-                                <div>
-                                  <label className="text-xs text-white/70">Flavor Name</label>
-                                  <Input
-                                    value={editingFlavor.name}
-                                    onChange={(e) => setEditingFlavor({ ...editingFlavor, name: e.target.value })}
-                                  />
-                                </div>
-                                <div className="grid grid-cols-2 gap-2">
-                                  <div>
-                                    <label className="text-xs text-white/70">Stock</label>
-                                    <Input
-                                      type="number"
-                                      min={0}
-                                      value={editingFlavor.stock}
-                                      onChange={(e) => setEditingFlavor({ ...editingFlavor, stock: Number(e.target.value) })}
-                                    />
-                                  </div>
-                                  <div>
-                                    <label className="text-xs text-white/70">Low Alert</label>
-                                    <Input
-                                      type="number"
-                                      min={1}
-                                      value={editingFlavor.lowStockAlert}
-                                      onChange={(e) => setEditingFlavor({ ...editingFlavor, lowStockAlert: Number(e.target.value) })}
-                                    />
-                                  </div>
-                                </div>
-                                <div>
-                                  <label className="text-xs text-white/70">Replace Image</label>
-                                  <Input
-                                    type="file"
-                                    accept="image/*"
-                                    disabled={editingFlavorUploading}
-                                    onChange={async (e) => {
-                                      const file = e.target.files?.[0];
-                                      if (!file) return;
-                                      setEditingFlavorUploading(true);
-                                      try {
-                                        const imageUrl = await uploadImage(file, "flavors");
-                                        setEditingFlavor({ ...editingFlavor, imageUrl });
-                                        toast.success("Flavor image uploaded");
-                                      } catch (error) {
-                                        toast.error(error instanceof Error ? error.message : "Could not upload flavor image");
-                                      } finally {
-                                        setEditingFlavorUploading(false);
-                                        e.target.value = "";
-                                      }
-                                    }}
-                                  />
-                                </div>
-                                <ProductImage
-                                  src={editingFlavor.imageUrl}
-                                  alt="Flavor Preview"
-                                  fallback={FLAVOR_PLACEHOLDER}
-                                  className="h-20 w-full rounded-lg bg-black/20 object-contain"
-                                />
-                                <div className="flex gap-2 pt-1">
-                                  <Button
-                                    disabled={editingFlavorUploading || !editingFlavor.name.trim()}
-                                    onClick={async () => {
-                                      try {
-                                        await updateFlavor(flavor.id, {
-                                          name: editingFlavor.name.trim(),
-                                          stock: editingFlavor.stock,
-                                          lowStockAlert: editingFlavor.lowStockAlert,
-                                          imageUrl: editingFlavor.imageUrl || FLAVOR_PLACEHOLDER,
-                                        });
-                                        setEditingFlavor(null);
-                                        toast.success("Flavor updated");
-                                      } catch (error) {
-                                        toast.error(error instanceof Error ? error.message : "Could not update flavor");
-                                      }
-                                    }}
-                                    className="flex-1 text-xs"
-                                  >
-                                    Save
-                                  </Button>
-                                  <Button variant="outline" onClick={() => setEditingFlavor(null)} className="text-xs">
-                                    Cancel
-                                  </Button>
-                                </div>
-                              </div>
-                            ) : (
-                              /* Flavor Regular Card */
-                              <>
-                                <div>
-                                  <div className="mb-2 flex items-center justify-between gap-2">
-                                    <h4 className="font-semibold text-white truncate">{flavor.name}</h4>
-                                    <span
-                                      className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold ${
-                                        flavor.stock === 0
-                                          ? "bg-rose-500/80 text-white"
-                                          : flavor.stock <= (flavor.lowStockAlert || settings.lowStockDefault)
-                                            ? "bg-amber-500/80 text-white"
-                                            : "bg-emerald-500/80 text-white"
-                                      }`}
-                                    >
-                                      {flavor.stock} in stock
-                                    </span>
-                                  </div>
-                                  <p className="text-xs text-white/60">
-                                    Alert threshold: {flavor.lowStockAlert || settings.lowStockDefault}
-                                  </p>
-                                </div>
+                        {activeBrandFlavors.map((flavor) => {
+                          const alertThreshold = flavor.lowStockAlert || settings.lowStockDefault;
+                          const isOutOfStock = flavor.stock === 0;
+                          const isLowStock = flavor.stock > 0 && flavor.stock <= alertThreshold;
 
-                                <div className="mt-3 space-y-2 border-t border-white/10 pt-2">
-                                  {/* Quick Stock Controls */}
-                                  <div className="flex items-center justify-between gap-1">
-                                    <span className="text-xs text-white/50">Quick adjust:</span>
-                                    <div className="flex gap-1">
-                                      <Button
-                                        variant="outline"
-                                        className="h-7 px-2 text-xs"
-                                        onClick={async () => {
-                                          try {
-                                            await updateFlavor(flavor.id, { stock: Math.max(0, flavor.stock - 1) });
-                                          } catch (error) {
-                                            toast.error("Could not update stock");
-                                          }
-                                        }}
+                          return (
+                            <div
+                              key={flavor.id}
+                              className={`flex flex-col justify-between rounded-xl border p-3.5 shadow backdrop-blur transition hover:border-white/30 ${
+                                isOutOfStock
+                                  ? "border-rose-500/40 bg-rose-950/15"
+                                  : isLowStock
+                                    ? "border-amber-500/40 bg-amber-950/15"
+                                    : "border-white/10 bg-slate-900/60"
+                              }`}
+                            >
+                              {editingFlavor?.id === flavor.id ? (
+                                /* Flavor Inline Editor */
+                                <div className="space-y-2">
+                                  <div className="flex items-center justify-between">
+                                    <p className="text-xs font-bold text-red-400">Edit Flavor</p>
+                                    <Button variant="ghost" className="h-6 w-6 p-0" onClick={() => setEditingFlavor(null)}>
+                                      <X className="h-3.5 w-3.5" />
+                                    </Button>
+                                  </div>
+                                  <div>
+                                    <label className="text-xs text-white/70">Flavor Name</label>
+                                    <Input
+                                      value={editingFlavor.name}
+                                      onChange={(e) => setEditingFlavor({ ...editingFlavor, name: e.target.value })}
+                                    />
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <div>
+                                      <label className="text-xs text-white/70">Stock</label>
+                                      <Input
+                                        type="number"
+                                        min={0}
+                                        value={editingFlavor.stock}
+                                        onChange={(e) => setEditingFlavor({ ...editingFlavor, stock: Number(e.target.value) })}
+                                      />
+                                    </div>
+                                    <div>
+                                      <label className="text-xs text-white/70">Low Alert</label>
+                                      <Input
+                                        type="number"
+                                        min={1}
+                                        value={editingFlavor.lowStockAlert}
+                                        onChange={(e) => setEditingFlavor({ ...editingFlavor, lowStockAlert: Number(e.target.value) })}
+                                      />
+                                    </div>
+                                  </div>
+                                  <div className="space-y-1">
+                                    <label className="text-xs text-white/70">Flavor Image</label>
+                                    <Input
+                                      type="file"
+                                      accept="image/*"
+                                      disabled={editingFlavorUploading}
+                                      onChange={async (e) => {
+                                        const file = e.target.files?.[0];
+                                        if (!file) return;
+                                        setEditingFlavorUploading(true);
+                                        try {
+                                          const imageUrl = await uploadImage(file, "flavors");
+                                          setEditingFlavor({ ...editingFlavor, imageUrl });
+                                          toast.success("Flavor image uploaded");
+                                        } catch (error) {
+                                          toast.error(error instanceof Error ? error.message : "Could not upload flavor image");
+                                        } finally {
+                                          setEditingFlavorUploading(false);
+                                          e.target.value = "";
+                                        }
+                                      }}
+                                    />
+                                    {editingFlavorUploading && <p className="text-xs text-red-400">Uploading...</p>}
+                                  </div>
+                                  <ProductImage
+                                    src={editingFlavor.imageUrl}
+                                    alt="Preview"
+                                    fallback={FLAVOR_PLACEHOLDER}
+                                    className="h-20 w-full rounded-lg bg-black/20 object-contain"
+                                  />
+                                  <div className="flex gap-2 pt-1">
+                                    <Button
+                                      disabled={editingFlavorUploading || !editingFlavor.name.trim()}
+                                      onClick={async () => {
+                                        try {
+                                          await updateFlavor(flavor.id, {
+                                            name: editingFlavor.name.trim(),
+                                            stock: editingFlavor.stock,
+                                            lowStockAlert: editingFlavor.lowStockAlert,
+                                            imageUrl: editingFlavor.imageUrl || FLAVOR_PLACEHOLDER,
+                                          });
+                                          setEditingFlavor(null);
+                                          toast.success("Flavor updated");
+                                        } catch (error) {
+                                          toast.error(error instanceof Error ? error.message : "Could not update flavor");
+                                        }
+                                      }}
+                                      className="flex-1 text-xs"
+                                    >
+                                      Save
+                                    </Button>
+                                    <Button variant="outline" onClick={() => setEditingFlavor(null)} className="text-xs">
+                                      Cancel
+                                    </Button>
+                                  </div>
+                                </div>
+                              ) : (
+                                /* Flavor Regular Card with Unified Quick Controls */
+                                <>
+                                  <div>
+                                    <div className="mb-2 flex items-center justify-between gap-2">
+                                      <h4 className="font-semibold text-white truncate" title={flavor.name}>{flavor.name}</h4>
+                                      <span
+                                        className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold ${
+                                          isOutOfStock
+                                            ? "bg-rose-500/80 text-white"
+                                            : isLowStock
+                                              ? "bg-amber-500/80 text-white"
+                                              : "bg-emerald-500/80 text-white"
+                                        }`}
                                       >
-                                        -1
-                                      </Button>
-                                      <Button
-                                        variant="outline"
-                                        className="h-7 px-2 text-xs"
-                                        onClick={async () => {
-                                          try {
-                                            await updateFlavor(flavor.id, { stock: flavor.stock + 1 });
-                                          } catch (error) {
-                                            toast.error("Could not update stock");
-                                          }
-                                        }}
-                                      >
-                                        +1
-                                      </Button>
+                                        {flavor.stock} in stock
+                                      </span>
+                                    </div>
+                                    <div className="flex items-center justify-between text-xs text-white/60">
+                                      <span>Alert threshold:</span>
+                                      <div className="flex items-center gap-1">
+                                        <Button
+                                          variant="ghost"
+                                          className="h-5 w-5 p-0 text-xs text-white/50 hover:text-white"
+                                          onClick={() => updateFlavor(flavor.id, { lowStockAlert: Math.max(1, alertThreshold - 1) })}
+                                        >
+                                          -
+                                        </Button>
+                                        <span className="font-semibold text-white/80">{alertThreshold}</span>
+                                        <Button
+                                          variant="ghost"
+                                          className="h-5 w-5 p-0 text-xs text-white/50 hover:text-white"
+                                          onClick={() => updateFlavor(flavor.id, { lowStockAlert: alertThreshold + 1 })}
+                                        >
+                                          +
+                                        </Button>
+                                      </div>
                                     </div>
                                   </div>
 
-                                  {/* Edit & Delete Action Buttons */}
-                                  <div className="flex items-center gap-1.5 pt-1">
-                                    <Button
-                                      variant="outline"
-                                      onClick={() => setEditingFlavor(flavor)}
-                                      className="flex-1 flex items-center justify-center gap-1 text-xs"
-                                    >
-                                      <Edit2 className="h-3 w-3" /> Edit
-                                    </Button>
-                                    <Button
-                                      variant="danger"
-                                      onClick={async () => {
-                                        if (confirm(`Delete flavor "${flavor.name}"?`)) {
-                                          try {
-                                            await deleteFlavor(flavor.id);
-                                            toast.success("Flavor deleted");
-                                          } catch (error) {
-                                            toast.error("Could not delete flavor");
+                                  <div className="mt-3 space-y-2 border-t border-white/10 pt-2.5">
+                                    {/* Quick Stock Controls & Direct Entry */}
+                                    <div className="flex items-center justify-between gap-1">
+                                      <div className="flex items-center gap-1">
+                                        <span className="text-xs text-white/50">Stock:</span>
+                                        <Input
+                                          type="number"
+                                          min={0}
+                                          key={flavor.stock}
+                                          defaultValue={flavor.stock}
+                                          className="h-7 w-14 p-1 text-center text-xs font-bold bg-black/40 border-white/10"
+                                          onKeyDown={async (e) => {
+                                            if (e.key === "Enter") {
+                                              const val = Number((e.target as HTMLInputElement).value);
+                                              if (!isNaN(val) && val >= 0) {
+                                                await updateFlavor(flavor.id, { stock: val });
+                                                toast.success(`Updated ${flavor.name} stock to ${val}`);
+                                              }
+                                            }
+                                          }}
+                                          onBlur={async (e) => {
+                                            const val = Number(e.target.value);
+                                            if (!isNaN(val) && val >= 0 && val !== flavor.stock) {
+                                              await updateFlavor(flavor.id, { stock: val });
+                                              toast.success(`Updated ${flavor.name} stock to ${val}`);
+                                            }
+                                          }}
+                                        />
+                                      </div>
+                                      <div className="flex gap-1">
+                                        <Button
+                                          variant="outline"
+                                          className="h-7 px-2 text-xs border-white/15 hover:bg-white/10"
+                                          onClick={async () => {
+                                            try {
+                                              await updateFlavor(flavor.id, { stock: Math.max(0, flavor.stock - 1) });
+                                            } catch (error) {
+                                              toast.error("Could not update stock");
+                                            }
+                                          }}
+                                        >
+                                          -1
+                                        </Button>
+                                        <Button
+                                          variant="outline"
+                                          className="h-7 px-2 text-xs border-white/15 hover:bg-white/10"
+                                          onClick={async () => {
+                                            try {
+                                              await updateFlavor(flavor.id, { stock: flavor.stock + 1 });
+                                            } catch (error) {
+                                              toast.error("Could not update stock");
+                                            }
+                                          }}
+                                        >
+                                          +1
+                                        </Button>
+                                        <Button
+                                          variant="outline"
+                                          className="h-7 px-2 text-xs border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/10"
+                                          onClick={async () => {
+                                            try {
+                                              await updateFlavor(flavor.id, { stock: flavor.stock + 5 });
+                                              toast.success(`Added +5 stock to ${flavor.name}`);
+                                            } catch (error) {
+                                              toast.error("Could not update stock");
+                                            }
+                                          }}
+                                        >
+                                          +5
+                                        </Button>
+                                      </div>
+                                    </div>
+
+                                    {/* Edit & Delete Action Buttons */}
+                                    <div className="flex items-center gap-1.5 pt-1">
+                                      <Button
+                                        variant="outline"
+                                        onClick={() => setEditingFlavor(flavor)}
+                                        className="flex-1 flex items-center justify-center gap-1 text-xs border-white/15 hover:bg-white/10"
+                                      >
+                                        <Edit2 className="h-3 w-3" /> Edit Flavor
+                                      </Button>
+                                      <Button
+                                        variant="danger"
+                                        onClick={async () => {
+                                          if (confirm(`Delete flavor "${flavor.name}"?`)) {
+                                            try {
+                                              await deleteFlavor(flavor.id);
+                                              toast.success("Flavor deleted");
+                                            } catch (error) {
+                                              toast.error("Could not delete flavor");
+                                            }
                                           }
-                                        }
-                                      }}
-                                      className="h-8 px-2 text-xs"
-                                    >
-                                      <Trash2 className="h-3.5 w-3.5" />
-                                    </Button>
+                                        }}
+                                        className="h-8 px-2 text-xs"
+                                      >
+                                        <Trash2 className="h-3.5 w-3.5" />
+                                      </Button>
+                                    </div>
                                   </div>
-                                </div>
-                              </>
-                            )}
-                          </div>
-                        ))}
+                                </>
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
 
-                      {!activeProductBrandFlavors.length && (
-                        <Card className="p-8 text-center">
+                      {!activeBrandFlavors.length && (
+                        <Card className="p-8 text-center bg-slate-900/40 border-white/10">
                           <Boxes className="mx-auto mb-2 h-8 w-8 text-white/40" />
-                          <p className="font-semibold">No flavors found for {activeProductBrand.name}</p>
+                          <p className="font-semibold">No flavors found for {activeBrand.name}</p>
                           <p className="mt-1 text-xs text-white/60">
-                            Click &quot;Add Flavor to {activeProductBrand.name}&quot; above to create new flavors!
+                            Click &quot;Add Flavor to {activeBrand.name}&quot; above to create new flavors!
                           </p>
                         </Card>
                       )}
@@ -1401,336 +1550,6 @@ export function AdminDashboard() {
           )}
 
           {/* ========================================================================= */}
-          {/* INVENTORY SECTION (BRAND-FIRST STOCK DRILLDOWN ARCHITECTURE) */}
-          {/* ========================================================================= */}
-          {active === "Inventory" && (
-            <div className="space-y-6">
-              {/* TOP LEVEL: ALL BRANDS INVENTORY OVERVIEW */}
-              {!selectedInventoryBrandId ? (
-                <>
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <div>
-                      <h2 className="text-2xl font-bold">Inventory & Stock Management</h2>
-                      <p className="text-sm text-white/70">
-                        Click on any brand to inspect stock levels, perform batch restocks, or adjust low-stock thresholds.
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Summary Metric Cards */}
-                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                    <div className="rounded-xl border border-white/10 bg-slate-900/40 p-4">
-                      <p className="text-xs text-white/60">Total Units in Stock</p>
-                      <p className="mt-1 text-2xl font-bold text-white">{inventorySummary.totalUnits}</p>
-                    </div>
-                    <div className="rounded-xl border border-white/10 bg-slate-900/40 p-4">
-                      <p className="text-xs text-white/60">Total Flavors</p>
-                      <p className="mt-1 text-2xl font-bold text-red-400">{inventorySummary.totalFlavors}</p>
-                    </div>
-                    <div className="rounded-xl border border-white/10 bg-slate-900/40 p-4">
-                      <p className="text-xs text-white/60">Low Stock Alert Items</p>
-                      <p className="mt-1 text-2xl font-bold text-amber-300">{inventorySummary.lowStockTotal}</p>
-                    </div>
-                    <div className="rounded-xl border border-white/10 bg-slate-900/40 p-4">
-                      <p className="text-xs text-white/60">Out of Stock Items</p>
-                      <p className="mt-1 text-2xl font-bold text-rose-400">{inventorySummary.outOfStockTotal}</p>
-                    </div>
-                  </div>
-
-                  {/* Search and Stock Status Filters */}
-                  <Card className="flex flex-wrap items-center justify-between gap-3 p-3">
-                    <div className="relative min-w-[240px] flex-1">
-                      <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-white/50" />
-                      <Input
-                        value={inventoryBrandSearch}
-                        onChange={(e) => setInventoryBrandSearch(e.target.value)}
-                        placeholder="Search brands in inventory..."
-                        className="pl-9"
-                      />
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <div className="flex items-center gap-1.5 text-xs text-white/60">
-                        <Filter className="h-3.5 w-3.5" /> Stock Filter:
-                      </div>
-                      <select
-                        className="h-10 rounded-xl border border-white/10 bg-white/5 px-3 text-sm text-white focus:outline-none"
-                        value={inventoryStockFilter}
-                        onChange={(e) => setInventoryStockFilter(e.target.value as "all" | "low-stock" | "out-of-stock" | "healthy")}
-                      >
-                        <option value="all">All Brands</option>
-                        <option value="low-stock">Needs Attention (Low/Out of stock)</option>
-                        <option value="out-of-stock">Out of Stock Only</option>
-                        <option value="healthy">Healthy Stock</option>
-                      </select>
-                    </div>
-                  </Card>
-
-                  {/* Brand Inventory Grid */}
-                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                    {filteredInventoryBrands.map(({ brand, flavorsCount, totalStock, outOfStockCount, lowStockCount, healthStatus }) => {
-                      const healthBadge =
-                        healthStatus === "out-of-stock" ? (
-                          <Badge className="border-rose-500/30 bg-rose-500/20 text-rose-300 flex items-center gap-1">
-                            <XCircle className="h-3 w-3" /> {outOfStockCount} Out of Stock
-                          </Badge>
-                        ) : healthStatus === "low-stock" ? (
-                          <Badge className="border-amber-500/30 bg-amber-500/20 text-amber-300 flex items-center gap-1">
-                            <AlertTriangle className="h-3 w-3" /> {lowStockCount} Low Stock
-                          </Badge>
-                        ) : (
-                          <Badge className="border-emerald-500/30 bg-emerald-500/20 text-emerald-300 flex items-center gap-1">
-                            <CheckCircle2 className="h-3 w-3" /> Healthy Stock
-                          </Badge>
-                        );
-
-                      return (
-                        <motion.div
-                          key={brand.id}
-                          whileHover={{ y: -4 }}
-                          className="group relative flex flex-col justify-between overflow-hidden rounded-2xl border border-white/10 bg-slate-900/50 p-4 shadow-lg backdrop-blur transition hover:border-red-500/40 hover:bg-slate-900/80"
-                        >
-                          <div>
-                            <div className="mb-3 flex items-center justify-between gap-2">
-                              {healthBadge}
-                              <Badge className="border-white/15 bg-white/5 text-xs text-white/80">
-                                {brand.category === "transparent" ? "Transparent" : "Non-Transparent"}
-                              </Badge>
-                            </div>
-
-                            <div className="relative mb-3 flex h-36 w-full items-center justify-center overflow-hidden rounded-xl bg-black/40 p-2">
-                              <ProductImage
-                                src={brand.imageUrl}
-                                alt={brand.name}
-                                className="h-full w-full object-contain transition duration-300 group-hover:scale-105"
-                              />
-                            </div>
-
-                            <div className="space-y-1">
-                              <h3 className="text-lg font-bold text-white group-hover:text-red-400">{brand.name}</h3>
-                              <div className="flex items-center justify-between text-xs text-white/70">
-                                <span>{flavorsCount} Flavors</span>
-                                <span className="font-semibold text-white">{totalStock} total units</span>
-                              </div>
-                            </div>
-                          </div>
-
-                          <div className="mt-4 pt-3 border-t border-white/10">
-                            <Button
-                              onClick={() => {
-                                setSelectedInventoryBrandId(brand.id);
-                                setInventoryFlavorSearch("");
-                              }}
-                              className="w-full flex items-center justify-center gap-1.5 text-xs"
-                            >
-                              Manage Inventory <ChevronRight className="h-3.5 w-3.5" />
-                            </Button>
-                          </div>
-                        </motion.div>
-                      );
-                    })}
-                  </div>
-
-                  {!filteredInventoryBrands.length && (
-                    <Card className="p-8 text-center">
-                      <Boxes className="mx-auto mb-2 h-8 w-8 text-white/40" />
-                      <p className="font-semibold">No inventory records matching your filter</p>
-                    </Card>
-                  )}
-                </>
-              ) : (
-                /* DRILLDOWN LEVEL: SELECTED BRAND INVENTORY MANAGER */
-                activeInventoryBrandStat && (
-                  <div className="space-y-6">
-                    {/* Navigation Header */}
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <Button
-                        variant="outline"
-                        onClick={() => setSelectedInventoryBrandId(null)}
-                        className="flex items-center gap-2"
-                      >
-                        <ArrowLeft className="h-4 w-4" /> Back to Brands Inventory
-                      </Button>
-                      <div className="flex items-center gap-2">
-                        <Button
-                          variant="outline"
-                          onClick={() => {
-                            // Quick restock all flavors in brand by +5
-                            activeInventoryFlavors.forEach((f) => updateFlavor(f.id, { stock: f.stock + 5 }));
-                            toast.success(`Added +5 stock to all ${activeInventoryBrandStat.brand.name} flavors`);
-                          }}
-                          className="flex items-center gap-1.5 text-xs"
-                        >
-                          <RefreshCw className="h-3.5 w-3.5" /> Restock All Flavors (+5)
-                        </Button>
-                      </div>
-                    </div>
-
-                    {/* Brand Stock Stats Banner */}
-                    <Card className="border-red-500/20 bg-slate-900/70 p-5">
-                      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                        <div className="flex items-center gap-4">
-                          <div className="h-20 w-20 shrink-0 overflow-hidden rounded-xl border border-white/10 bg-black/40 p-2">
-                            <ProductImage
-                              src={activeInventoryBrandStat.brand.imageUrl}
-                              alt={activeInventoryBrandStat.brand.name}
-                              className="h-full w-full object-contain"
-                            />
-                          </div>
-                          <div>
-                            <h2 className="text-xl font-bold">{activeInventoryBrandStat.brand.name} Stock Manager</h2>
-                            <p className="text-xs text-white/60">
-                              Category: {activeInventoryBrandStat.brand.category} · Price: {toCurrency(activeInventoryBrandStat.brand.price ?? settings.podPrice)}
-                            </p>
-                            <div className="mt-2 flex flex-wrap gap-2">
-                              <span className="rounded-md bg-white/10 px-2 py-0.5 text-xs">
-                                Total Units: <b>{activeInventoryBrandStat.totalStock}</b>
-                              </span>
-                              <span className="rounded-md bg-emerald-500/20 px-2 py-0.5 text-xs text-emerald-300">
-                                In Stock: <b>{activeInventoryBrandStat.healthyCount}</b>
-                              </span>
-                              {activeInventoryBrandStat.lowStockCount > 0 && (
-                                <span className="rounded-md bg-amber-500/20 px-2 py-0.5 text-xs text-amber-300">
-                                  Low Stock: <b>{activeInventoryBrandStat.lowStockCount}</b>
-                                </span>
-                              )}
-                              {activeInventoryBrandStat.outOfStockCount > 0 && (
-                                <span className="rounded-md bg-rose-500/20 px-2 py-0.5 text-xs text-rose-300">
-                                  Out of Stock: <b>{activeInventoryBrandStat.outOfStockCount}</b>
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    </Card>
-
-                    {/* Flavors Stock Grid / Table */}
-                    <div className="space-y-4">
-                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                        <h3 className="text-lg font-bold">Flavors Stock Adjustment</h3>
-                        <div className="relative min-w-[220px]">
-                          <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-white/50" />
-                          <Input
-                            value={inventoryFlavorSearch}
-                            onChange={(e) => setInventoryFlavorSearch(e.target.value)}
-                            placeholder="Filter flavors..."
-                            className="pl-9 text-sm"
-                          />
-                        </div>
-                      </div>
-
-                      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                        {activeInventoryFlavors.map((flavor) => {
-                          const alertThreshold = flavor.lowStockAlert || settings.lowStockDefault;
-                          const isOutOfStock = flavor.stock === 0;
-                          const isLowStock = !isOutOfStock && flavor.stock <= alertThreshold;
-
-                          return (
-                            <div
-                              key={flavor.id}
-                              className="flex flex-col justify-between rounded-xl border border-white/10 bg-slate-900/50 p-4 shadow backdrop-blur transition hover:border-white/20"
-                            >
-                              <div>
-                                <div className="mb-2 flex items-center justify-between gap-2">
-                                  <span
-                                    className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold ${
-                                      isOutOfStock
-                                        ? "bg-rose-500/20 text-rose-300"
-                                        : isLowStock
-                                          ? "bg-amber-500/20 text-amber-300"
-                                          : "bg-emerald-500/20 text-emerald-300"
-                                    }`}
-                                  >
-                                    {isOutOfStock ? <XCircle className="h-3 w-3" /> : isLowStock ? <AlertTriangle className="h-3 w-3" /> : <CheckCircle2 className="h-3 w-3" />}
-                                    {isOutOfStock ? "Out of Stock" : isLowStock ? "Low Stock" : "In Stock"}
-                                  </span>
-                                  <span className="text-xs text-white/50">Alert at: {alertThreshold}</span>
-                                </div>
-
-                                <div className="flex items-center justify-between gap-3">
-                                  <div className="flex-1 min-w-0">
-                                    <h4 className="font-semibold text-white truncate text-base">{flavor.name}</h4>
-                                    <p className="text-xs text-white/60">Alert threshold: {alertThreshold}</p>
-                                  </div>
-                                  <p className="text-2xl font-extrabold text-white shrink-0">{flavor.stock} <span className="text-xs font-normal text-white/60">units</span></p>
-                                </div>
-                              </div>
-
-                              {/* Quick Adjustment Controls */}
-                              <div className="mt-4 space-y-2 border-t border-white/10 pt-3">
-                                <div className="flex items-center justify-between gap-1">
-                                  <span className="text-xs text-white/60">Quick Adjust:</span>
-                                  <div className="flex items-center gap-1">
-                                    <Button
-                                      variant="outline"
-                                      className="h-8 px-2 text-xs"
-                                      onClick={() => updateFlavor(flavor.id, { stock: Math.max(0, flavor.stock - 5) })}
-                                    >
-                                      -5
-                                    </Button>
-                                    <Button
-                                      variant="outline"
-                                      className="h-8 px-2 text-xs"
-                                      onClick={() => updateFlavor(flavor.id, { stock: Math.max(0, flavor.stock - 1) })}
-                                    >
-                                      -1
-                                    </Button>
-                                    <Button
-                                      variant="outline"
-                                      className="h-8 px-2 text-xs text-emerald-400"
-                                      onClick={() => updateFlavor(flavor.id, { stock: flavor.stock + 1 })}
-                                    >
-                                      +1
-                                    </Button>
-                                    <Button
-                                      variant="outline"
-                                      className="h-8 px-2 text-xs text-emerald-400"
-                                      onClick={() => updateFlavor(flavor.id, { stock: flavor.stock + 5 })}
-                                    >
-                                      +5
-                                    </Button>
-                                  </div>
-                                </div>
-
-                                <div className="flex items-center justify-between gap-2 pt-1 text-xs">
-                                  <span className="text-white/60">Low Alert Threshold:</span>
-                                  <div className="flex items-center gap-1">
-                                    <Button
-                                      variant="ghost"
-                                      className="h-6 w-6 p-0 text-xs"
-                                      onClick={() => updateFlavor(flavor.id, { lowStockAlert: Math.max(1, alertThreshold - 1) })}
-                                    >
-                                      -
-                                    </Button>
-                                    <span className="font-semibold text-white">{alertThreshold}</span>
-                                    <Button
-                                      variant="ghost"
-                                      className="h-6 w-6 p-0 text-xs"
-                                      onClick={() => updateFlavor(flavor.id, { lowStockAlert: alertThreshold + 1 })}
-                                    >
-                                      +
-                                    </Button>
-                                  </div>
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-
-                      {!activeInventoryFlavors.length && (
-                        <Card className="p-8 text-center">
-                          <p className="text-sm text-white/60">No flavors found for this brand.</p>
-                        </Card>
-                      )}
-                    </div>
-                  </div>
-                )
-              )}
-            </div>
-          )}
-
-          {/* ========================================================================= */}
           {/* CUSTOMERS SECTION */}
           {/* ========================================================================= */}
           {active === "Customers" && (
@@ -1977,7 +1796,7 @@ export function AdminDashboard() {
                     if (!flavor) return toast.error("Please select a flavor.");
                     const qty = Math.max(1, Math.floor(Number(purchase.quantity) || 1));
                     if (flavor.stock < qty) {
-                      return toast.error(`Insufficient stock for ${flavor.name} (Available: ${flavor.stock}, Requested: ${qty}). Please increase stock in Products or Inventory.`);
+                      return toast.error(`Insufficient stock for ${flavor.name} (Available: ${flavor.stock}, Requested: ${qty}). Please increase stock in Products & Inventory.`);
                     }
                     try {
                       await recordPurchase({

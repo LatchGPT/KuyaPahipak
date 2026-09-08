@@ -34,6 +34,8 @@ export interface PurchaseItem {
   flavorId: string;
   flavorName: string;
   quantity: number;
+  brandId?: string;
+  brandName?: string;
 }
 
 export interface Customer {

@@ -244,6 +244,27 @@ export async function saveSettings(settings: Settings) {
   await setDoc(doc(db!, "settings", settings.id), settings);
 }
 
+export function subscribeSettings(callback: (settings: Settings) => void, settingsId = "default") {
+  if (!db) {
+    callback({ id: settingsId, lowStockDefault: 10, podPrice: 350 });
+    return noop;
+  }
+  return onSnapshot(
+    doc(db, "settings", settingsId),
+    (snap) => {
+      if (snap.exists()) {
+        callback({ id: snap.id, lowStockDefault: 10, podPrice: 350, ...snap.data() } as Settings);
+      } else {
+        callback({ id: settingsId, lowStockDefault: 10, podPrice: 350 });
+      }
+    },
+    (err) => {
+      console.warn("subscribeSettings error:", err);
+      callback({ id: settingsId, lowStockDefault: 10, podPrice: 350 });
+    },
+  );
+}
+
 export async function getSettings(settingsId = "default") {
   if (!db) return { id: settingsId, lowStockDefault: 10, podPrice: 350 } satisfies Settings;
   const settingsDoc = await getDoc(doc(db, "settings", settingsId));
@@ -293,8 +314,26 @@ export async function recordPurchase(input: {
     const customerItems = customer.items ?? [];
     const existingItem = customerItems.find((i) => i.flavorId === input.flavorId);
     const items = existingItem
-      ? customerItems.map((item) => (item.flavorId === input.flavorId ? { ...item, quantity: item.quantity + input.quantity } : item))
-      : [...customerItems, { flavorId: input.flavorId, flavorName: input.flavorName, quantity: input.quantity }];
+      ? customerItems.map((item) =>
+          item.flavorId === input.flavorId
+            ? {
+                ...item,
+                quantity: item.quantity + input.quantity,
+                brandId: input.brandId ?? item.brandId,
+                brandName: input.brandName ?? item.brandName,
+              }
+            : item,
+        )
+      : [
+          ...customerItems,
+          {
+            flavorId: input.flavorId,
+            flavorName: input.flavorName,
+            quantity: input.quantity,
+            brandId: input.brandId,
+            brandName: input.brandName,
+          },
+        ];
 
     const totalPurchased = customer.totalPurchased + input.quantity;
     const reward = computeRewardState(totalPurchased, customer.totalRedeemed);
