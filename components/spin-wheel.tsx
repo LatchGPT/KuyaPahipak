@@ -1,11 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AnimatePresence, motion } from "framer-motion";
+import { motion } from "framer-motion";
+import Link from "next/link";
 import {
   Check,
   CheckCircle2,
-  Copy,
   Gift,
   Heart,
   PartyPopper,
@@ -197,16 +197,7 @@ export function SpinWheelGame({ ticket, brands, flavors, settings, onClaimComple
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [rotationAngle, setRotationAngle] = useState(0);
   const [claiming, setClaiming] = useState(false);
-  const [copiedCode, setCopiedCode] = useState(false);
   const confettiCanvasRef = useRef<HTMLCanvasElement>(null);
-
-  const handleCopyCode = () => {
-    if (!ticket.code) return;
-    navigator.clipboard.writeText(ticket.code);
-    setCopiedCode(true);
-    toast.success("Voucher code copied to clipboard!");
-    setTimeout(() => setCopiedCode(false), 2000);
-  };
 
   useEffect(() => {
     wheelAudio.enabled = soundEnabled;
@@ -915,11 +906,11 @@ export function SpinWheelGame({ ticket, brands, flavors, settings, onClaimComple
             </div>
 
             <div className="mt-6 flex justify-center">
-              <a href="/">
+              <Link href="/">
                 <Button variant="outline" className="text-xs border-neutral-700 hover:bg-neutral-800 text-white">
                   Return to Store Home
                 </Button>
-              </a>
+              </Link>
             </div>
           </Card>
         </motion.div>

@@ -1,6 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="800" height="450" viewBox="0 0 800 450" fill="none">
-  <defs><linearGradient id="bg" x1="0" y1="0" x2="800" y2="450"><stop stop-color="#0f172a"/><stop offset="1" stop-color="#4c1d95"/></linearGradient></defs>
-  <rect width="800" height="450" fill="url(#bg)"/>
-  <circle cx="700" cy="90" r="120" fill="#22d3ee" fill-opacity="0.2"/>
-  <text x="60" y="250" fill="#e2e8f0" font-family="Arial" font-size="64" font-weight="700">Kuya Pahipak</text>
-</svg>

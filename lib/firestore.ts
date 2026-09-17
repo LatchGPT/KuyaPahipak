@@ -26,37 +26,112 @@ const ensureDb = () => {
   if (!db) throw new Error("Firebase is not configured. Add NEXT_PUBLIC_FIREBASE_* env variables.");
 };
 
+const DEMO_BRANDS: Brand[] = [
+  {
+    id: "demo-relx",
+    name: "Relx Infinity",
+    category: "non-transparent",
+    status: "available",
+    price: 350,
+    imageUrl: "/placeholder-brand-1.svg",
+    createdAt: 1,
+  },
+  {
+    id: "demo-shift",
+    name: "Shift Pods",
+    category: "transparent",
+    status: "available",
+    price: 350,
+    imageUrl: "/placeholder-brand-2.svg",
+    createdAt: 2,
+  },
+  {
+    id: "demo-nevoks",
+    name: "Nevoks Bar",
+    category: "transparent",
+    status: "available",
+    price: 350,
+    imageUrl: "/placeholder-brand-3.svg",
+    createdAt: 3,
+  },
+  {
+    id: "demo-oxva",
+    name: "Oxva Xlim",
+    category: "non-transparent",
+    status: "available",
+    price: 350,
+    imageUrl: "/placeholder-brand-4.svg",
+    createdAt: 4,
+  },
+];
+
+const DEMO_FLAVORS: Flavor[] = [
+  { id: "f-1", brandId: "demo-relx", name: "Watermelon Ice", imageUrl: "/placeholder-flavor-1.svg", stock: 12, lowStockAlert: 5 },
+  { id: "f-2", brandId: "demo-relx", name: "Menthol Extra", imageUrl: "/placeholder-flavor-2.svg", stock: 8, lowStockAlert: 5 },
+  { id: "f-3", brandId: "demo-shift", name: "Taro Ice Cream", imageUrl: "/placeholder-flavor-3.svg", stock: 15, lowStockAlert: 5 },
+  { id: "f-4", brandId: "demo-shift", name: "Iced Cola", imageUrl: "/placeholder-flavor-4.svg", stock: 6, lowStockAlert: 5 },
+  { id: "f-5", brandId: "demo-nevoks", name: "Grape Freeze", imageUrl: "/placeholder-flavor-1.svg", stock: 10, lowStockAlert: 5 },
+  { id: "f-6", brandId: "demo-oxva", name: "Mango Blast", imageUrl: "/placeholder-flavor-2.svg", stock: 14, lowStockAlert: 5 },
+];
+
+const DEMO_CUSTOMERS: Customer[] = [
+  { id: "c-1", name: "Alex Santos", totalPurchased: 14, totalRedeemed: 1, items: [{ flavorId: "f-1", flavorName: "Relx - Watermelon Ice", quantity: 14 }], createdAt: 1 },
+  { id: "c-2", name: "Maria Clara", totalPurchased: 9, totalRedeemed: 0, items: [{ flavorId: "f-3", flavorName: "Shift - Taro Ice Cream", quantity: 9 }], createdAt: 2 },
+  { id: "c-3", name: "Juan Dela Cruz", totalPurchased: 20, totalRedeemed: 2, items: [{ flavorId: "f-6", flavorName: "Oxva - Mango Blast", quantity: 20 }], createdAt: 3 },
+];
+
 export function subscribeBrands(callback: (brands: Brand[]) => void) {
   if (!db) {
-    callback([]);
+    callback(DEMO_BRANDS);
     return noop;
   }
-  return onSnapshot(query(collection(db, "brands"), orderBy("name")), (snapshot) => {
-    const rows = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }) as Brand);
-    callback(rows);
-  });
+  return onSnapshot(
+    query(collection(db, "brands"), orderBy("name")),
+    (snapshot) => {
+      const rows = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }) as Brand);
+      callback(rows);
+    },
+    (error) => {
+      console.error("Firestore subscribeBrands error:", error);
+      callback(DEMO_BRANDS);
+    }
+  );
 }
 
 export function subscribeFlavors(callback: (flavors: Flavor[]) => void) {
   if (!db) {
-    callback([]);
+    callback(DEMO_FLAVORS);
     return noop;
   }
-  return onSnapshot(query(collection(db, "flavors"), orderBy("name")), (snapshot) => {
-    const rows = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }) as Flavor);
-    callback(rows);
-  });
+  return onSnapshot(
+    query(collection(db, "flavors"), orderBy("name")),
+    (snapshot) => {
+      const rows = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }) as Flavor);
+      callback(rows);
+    },
+    (error) => {
+      console.error("Firestore subscribeFlavors error:", error);
+      callback(DEMO_FLAVORS);
+    }
+  );
 }
 
 export function subscribeCustomers(callback: (customers: Customer[]) => void) {
   if (!db) {
-    callback([]);
+    callback(DEMO_CUSTOMERS);
     return noop;
   }
-  return onSnapshot(query(collection(db, "customers"), orderBy("name")), (snapshot) => {
-    const rows = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }) as Customer);
-    callback(rows);
-  });
+  return onSnapshot(
+    query(collection(db, "customers"), orderBy("name")),
+    (snapshot) => {
+      const rows = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }) as Customer);
+      callback(rows);
+    },
+    (error) => {
+      console.error("Firestore subscribeCustomers error:", error);
+      callback([]);
+    }
+  );
 }
 
 export function subscribeSales(callback: (sales: Sale[]) => void) {

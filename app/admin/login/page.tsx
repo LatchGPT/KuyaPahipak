@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { signInWithEmailAndPassword, onAuthStateChanged } from "firebase/auth";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { ArrowLeft, Lock, Mail, Loader2 } from "lucide-react";
 import { auth } from "@/lib/firebase";
 import { isAdmin } from "@/lib/firestore";
@@ -53,10 +54,10 @@ export default function AdminLoginPage() {
       <Card className="w-full max-w-md space-y-5 border-neutral-800 bg-neutral-900/90 p-6 sm:p-8 backdrop-blur shadow-2xl">
         {/* Navigation & Header */}
         <div className="flex items-center justify-between border-b border-neutral-800 pb-4">
-          <a href="/" className="inline-flex items-center gap-1.5 text-xs font-semibold text-neutral-400 hover:text-white transition">
+          <Link href="/" className="inline-flex items-center gap-1.5 text-xs font-semibold text-neutral-400 hover:text-white transition">
             <ArrowLeft className="h-4 w-4" />
             Back to Shop
-          </a>
+          </Link>
           <ThemeToggle />
         </div>
 
@@ -117,9 +118,9 @@ export default function AdminLoginPage() {
         </form>
 
         <div className="text-center pt-2">
-          <a href="/" className="text-xs text-neutral-500 hover:text-neutral-300 transition">
+          <Link href="/" className="text-xs text-neutral-500 hover:text-neutral-300 transition">
             ← Return to Public Catalog
-          </a>
+          </Link>
         </div>
       </Card>
     </div>

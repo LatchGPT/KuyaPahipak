@@ -9,13 +9,11 @@ import {
   AlertTriangle,
   ArrowLeft,
   Boxes,
-  CheckCircle2,
   ChevronRight,
   Copy,
   Dices,
   Edit2,
   ExternalLink,
-  Eye,
   Filter,
   Layers,
   Menu,
@@ -27,7 +25,6 @@ import {
   SlidersHorizontal,
   Sparkles,
   Trash2,
-  Upload,
   X,
   XCircle,
 } from "lucide-react";
@@ -82,6 +79,7 @@ import { Logo } from "@/components/logo";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Progress } from "@/components/ui/progress";
 import { toast } from "sonner";
+import { optimizeCloudinaryUrl } from "@/lib/image-loader";
 
 const sections = ["Dashboard", "Products & Inventory", "Customers", "Sales", "Roulette", "Analytics", "Reports", "Settings"] as const;
 type Section = (typeof sections)[number];
@@ -90,12 +88,15 @@ const BRAND_PLACEHOLDER = "/placeholder-brand-1.svg";
 const FLAVOR_PLACEHOLDER = "/placeholder-flavor-1.svg";
 
 function ProductImage({ src, alt, fallback = BRAND_PLACEHOLDER, className }: { src: string; alt: string; fallback?: string; className: string }) {
+  const optimizedSrc = optimizeCloudinaryUrl(src, { width: 350 });
   // Cloudinary URLs are user-provided at runtime; a native image keeps the error fallback reliable.
-  // eslint-disable-next-line @next/next/no-img-element
   return (
+    // eslint-disable-next-line @next/next/no-img-element
     <img
-      src={src || fallback}
+      src={optimizedSrc || fallback}
       alt={alt}
+      loading="lazy"
+      decoding="async"
       className={className}
       onError={(event) => {
         if (!event.currentTarget.src.endsWith(fallback)) event.currentTarget.src = fallback;
@@ -818,8 +819,10 @@ export function AdminDashboard() {
                               />
                             </div>
                             <div>
-                              <label className="mb-1 block text-xs font-medium text-white/70">Category</label>
+                              <label htmlFor="edit-brand-category" className="mb-1 block text-xs font-medium text-white/70">Category</label>
                               <select
+                                id="edit-brand-category"
+                                aria-label="Category"
                                 className="h-10 w-full rounded-xl border border-white/10 bg-white/5 px-3 text-sm"
                                 value={editingBrand.category}
                                 onChange={(e) => setEditingBrand({ ...editingBrand, category: e.target.value as PodCategory })}
@@ -829,8 +832,10 @@ export function AdminDashboard() {
                               </select>
                             </div>
                             <div>
-                              <label className="mb-1 block text-xs font-medium text-white/70">Availability Status</label>
+                              <label htmlFor="edit-brand-status" className="mb-1 block text-xs font-medium text-white/70">Availability Status</label>
                               <select
+                                id="edit-brand-status"
+                                aria-label="Availability Status"
                                 className="h-10 w-full rounded-xl border border-white/10 bg-white/5 px-3 text-sm"
                                 value={editingBrand.status ?? "available"}
                                 onChange={(e) => setEditingBrand({ ...editingBrand, status: e.target.value as ProductStatus })}
@@ -1203,7 +1208,7 @@ export function AdminDashboard() {
                                           onClick={async () => {
                                             try {
                                               await updateFlavor(flavor.id, { stock: Math.max(0, flavor.stock - 1) });
-                                            } catch (error) {
+                                            } catch {
                                               toast.error("Could not update stock");
                                             }
                                           }}
@@ -1216,7 +1221,7 @@ export function AdminDashboard() {
                                           onClick={async () => {
                                             try {
                                               await updateFlavor(flavor.id, { stock: flavor.stock + 1 });
-                                            } catch (error) {
+                                            } catch {
                                               toast.error("Could not update stock");
                                             }
                                           }}
@@ -1230,7 +1235,7 @@ export function AdminDashboard() {
                                             try {
                                               await updateFlavor(flavor.id, { stock: flavor.stock + 5 });
                                               toast.success(`Added +5 stock to ${flavor.name}`);
-                                            } catch (error) {
+                                            } catch {
                                               toast.error("Could not update stock");
                                             }
                                           }}
@@ -1256,7 +1261,7 @@ export function AdminDashboard() {
                                             try {
                                               await deleteFlavor(flavor.id);
                                               toast.success("Flavor deleted");
-                                            } catch (error) {
+                                            } catch {
                                               toast.error("Could not delete flavor");
                                             }
                                           }
@@ -1329,8 +1334,10 @@ export function AdminDashboard() {
                             />
                           </div>
                           <div>
-                            <label className="mb-1 block text-xs font-medium text-white/70">Category</label>
+                            <label htmlFor="add-brand-category" className="mb-1 block text-xs font-medium text-white/70">Category</label>
                             <select
+                              id="add-brand-category"
+                              aria-label="Category"
                               className="h-10 w-full rounded-xl border border-white/10 bg-white/5 px-3 text-sm"
                               value={brandForm.category}
                               onChange={(e) => setBrandForm((s) => ({ ...s, category: e.target.value as PodCategory }))}
@@ -1341,8 +1348,10 @@ export function AdminDashboard() {
                           </div>
                         </div>
                         <div>
-                          <label className="mb-1 block text-xs font-medium text-white/70">Availability Status</label>
+                          <label htmlFor="add-brand-status" className="mb-1 block text-xs font-medium text-white/70">Availability Status</label>
                           <select
+                            id="add-brand-status"
+                            aria-label="Availability Status"
                             className="h-10 w-full rounded-xl border border-white/10 bg-white/5 px-3 text-sm"
                             value={brandForm.status}
                             onChange={(e) => setBrandForm((s) => ({ ...s, status: e.target.value as ProductStatus }))}
@@ -2071,7 +2080,7 @@ export function AdminDashboard() {
                         try {
                           await saveSettings(settings);
                           toast.success("Probability weights saved!");
-                        } catch (err) {
+                        } catch {
                           toast.error("Failed to save wheel odds.");
                         } finally {
                           setSavingOdds(false);

@@ -2,14 +2,16 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { ChevronRight, Gift, Package, Search, ShoppingBag, Sparkles, Tag, User, X } from "lucide-react";
+import { ChevronRight, Gift, Search, ShoppingBag, Sparkles, X } from "lucide-react";
 import { Logo } from "@/components/logo";
+import { Preloader } from "@/components/preloader";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { categoryLabel, subscribeBrands, subscribeCustomers, subscribeFlavors, subscribeSettings } from "@/lib/firestore";
+import { optimizeCloudinaryUrl, preloadImages } from "@/lib/image-loader";
 import { computeRewardState } from "@/lib/reward";
 import { PRODUCT_STATUS_LABELS, productStatusRank, type Brand, type Customer, type Flavor, type Settings } from "@/lib/types";
 import { toCurrency } from "@/lib/utils";
@@ -27,13 +29,34 @@ const sorters = {
 
 const FALLBACK_IMAGE = "/placeholder-brand-1.svg";
 
-function ProductImage({ src, alt, className }: { src: string; alt: string; className: string }) {
+function ProductImage({
+  src,
+  alt,
+  className,
+  priority = false,
+  width = 400,
+  height = 224,
+}: {
+  src: string;
+  alt: string;
+  className: string;
+  priority?: boolean;
+  width?: number;
+  height?: number;
+}) {
+  const optimizedSrc = optimizeCloudinaryUrl(src, { width: 450 });
+
   return (
     // Cloudinary URLs are user-provided at runtime; a native image keeps the error fallback reliable.
     // eslint-disable-next-line @next/next/no-img-element
     <img
-      src={src || FALLBACK_IMAGE}
+      src={optimizedSrc || FALLBACK_IMAGE}
       alt={alt}
+      width={width}
+      height={height}
+      loading={priority ? "eager" : "lazy"}
+      decoding={priority ? "sync" : "async"}
+      fetchPriority={priority ? "high" : "auto"}
       className={className}
       onError={(event: React.SyntheticEvent<HTMLImageElement>) => {
         if (event.currentTarget.src.endsWith(FALLBACK_IMAGE)) return;
@@ -53,15 +76,67 @@ export function PublicHome() {
   const [flavorSearch, setFlavorSearch] = useState("");
   const [customerSearch, setCustomerSearch] = useState("");
   const [sortBy, setSortBy] = useState<keyof typeof sorters>("most");
+  const [isInitialLoading, setIsInitialLoading] = useState(true);
 
   useEffect(() => {
+    let isMounted = true;
+    const startTime = Date.now();
+    const MIN_LOAD_TIME_MS = 700;
+    const MAX_SAFETY_TIMEOUT_MS = 6000;
+
+    let initialDataHandled = false;
+
+    const finalizeLoading = (currentBrands: Brand[]) => {
+      const topImageUrls = currentBrands
+        .slice(0, 6)
+        .map((b) => optimizeCloudinaryUrl(b.imageUrl, { width: 450 }))
+        .filter(Boolean);
+
+      // Give images up to 1500ms to preload, but don't hold the screen forever if network is slow
+      const performPreload =
+        topImageUrls.length > 0
+          ? Promise.race([
+              preloadImages(topImageUrls),
+              new Promise((resolve) => setTimeout(resolve, 1500)),
+            ])
+          : Promise.resolve();
+
+      performPreload.finally(() => {
+        if (!isMounted) return;
+        const elapsed = Date.now() - startTime;
+        const remainingDelay = Math.max(0, MIN_LOAD_TIME_MS - elapsed);
+        setTimeout(() => {
+          if (isMounted) {
+            setIsInitialLoading(false);
+          }
+        }, remainingDelay);
+      });
+    };
+
+    const safetyTimer = setTimeout(() => {
+      if (isMounted) {
+        setIsInitialLoading(false);
+      }
+    }, MAX_SAFETY_TIMEOUT_MS);
+
     const unsubscribers = [
-      subscribeBrands(setBrands),
+      subscribeBrands((incomingBrands) => {
+        setBrands(incomingBrands);
+        if (!initialDataHandled) {
+          initialDataHandled = true;
+          finalizeLoading(incomingBrands);
+        }
+      }),
       subscribeFlavors(setFlavors),
       subscribeCustomers(setCustomers),
       subscribeSettings(setSettings),
     ];
-    return () => unsubscribers.forEach((unsub) => unsub());
+
+    return () => {
+      isMounted = false;
+      clearTimeout(safetyTimer);
+      unsubscribers.forEach((unsub) => unsub());
+    };
   }, []);
 
   useEffect(() => {
@@ -171,7 +246,12 @@ export function PublicHome() {
   }, [selectedCustomer, flavors, brands]);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-black via-neutral-950 to-red-950/30 text-white">
+    <>
+      <AnimatePresence>
+        {isInitialLoading && <Preloader key="kuya-preloader" />}
+      </AnimatePresence>
+
+      <div className="min-h-screen bg-gradient-to-br from-black via-neutral-950 to-red-950/30 text-white">
       <header className="sticky top-0 z-10 border-b border-white/10 bg-black/80 px-4 py-4 backdrop-blur md:px-8">
         <div className="mx-auto flex w-full max-w-7xl items-center justify-between">
           <Logo />
@@ -236,54 +316,69 @@ export function PublicHome() {
                 <h2 className="text-xl font-bold">{categoryLabel(category)}</h2>
                 <Badge className="brand-count-badge">{grouped[category].length} Brands</Badge>
               </div>
-              <div className="grid gap-4 sm:grid-cols-2">
-                {grouped[category].map((brand) => {
-                  const status = brand.status ?? "available";
-                  const isAvailable = status === "available";
-                  const isNotSelectable = !isAvailable;
-                  const statusBadgeClass =
-                    status === "available"
-                      ? "bg-emerald-500/20 text-emerald-100"
-                      : status === "coming-soon"
-                        ? "bg-amber-500/20 text-amber-100"
-                        : "bg-red-500/20 text-red-200";
-                  const brandPrice = brand.price ?? settings.podPrice;
-
-                  return (
-                    <motion.button
-                      key={brand.id}
-                      whileHover={isNotSelectable ? {} : { y: -4 }}
-                      className={`overflow-hidden rounded-xl border border-neutral-800 bg-black/60 text-left transition ${
-                        isNotSelectable
-                          ? "cursor-not-allowed opacity-60 grayscale-[40%]"
-                          : "hover:border-red-500/60 hover:shadow-[0_0_20px_rgba(220,38,38,0.25)]"
-                      }`}
-                      disabled={isNotSelectable}
-                      tabIndex={isNotSelectable ? -1 : 0}
-                      onClick={() => {
-                        if (isNotSelectable) return;
-                        setFlavorSearch("");
-                        setSelectedBrand(brand);
-                      }}
-                    >
-                      <ProductImage
-                        src={brand.imageUrl}
-                        alt={brand.name}
-                        className={`h-56 w-full bg-black/40 object-contain ${isNotSelectable ? "select-none" : ""}`}
-                      />
-                      <div className="p-3 space-y-2">
-                        <div className="flex items-center justify-between gap-2">
-                          <p className={`font-semibold ${isNotSelectable ? "text-white/60" : ""}`}>{brand.name}</p>
-                          <Badge className={statusBadgeClass}>{PRODUCT_STATUS_LABELS[status]}</Badge>
-                        </div>
-                        <div className="flex items-center justify-between pt-1 border-t border-white/5 text-xs">
-                          <span className="text-neutral-400">Price per pod</span>
-                          <span className="font-black text-red-400 text-sm">{toCurrency(brandPrice)}</span>
+              <div className="grid gap-4 sm:grid-cols-2 min-h-[290px]">
+                {grouped[category].length === 0 ? (
+                  <>
+                    {[1, 2].map((i) => (
+                      <div key={i} className="overflow-hidden rounded-xl border border-neutral-800 bg-black/40 animate-pulse">
+                        <div className="h-56 w-full bg-neutral-900/60" />
+                        <div className="p-3 space-y-2">
+                          <div className="h-4 w-2/3 bg-neutral-800 rounded" />
+                          <div className="h-3 w-1/3 bg-neutral-800 rounded" />
                         </div>
                       </div>
-                    </motion.button>
-                  );
-                })}
+                    ))}
+                  </>
+                ) : (
+                  grouped[category].map((brand, index) => {
+                    const status = brand.status ?? "available";
+                    const isAvailable = status === "available";
+                    const isNotSelectable = !isAvailable;
+                    const statusBadgeClass =
+                      status === "available"
+                        ? "bg-emerald-500/20 text-emerald-100"
+                        : status === "coming-soon"
+                          ? "bg-amber-500/20 text-amber-100"
+                          : "bg-red-500/20 text-red-200";
+                    const brandPrice = brand.price ?? settings.podPrice;
+
+                    return (
+                      <motion.button
+                        key={brand.id}
+                        whileHover={isNotSelectable ? {} : { y: -4 }}
+                        className={`overflow-hidden rounded-xl border border-neutral-800 bg-black/60 text-left transition ${
+                          isNotSelectable
+                            ? "cursor-not-allowed opacity-60 grayscale-[40%]"
+                            : "hover:border-red-500/60 hover:shadow-[0_0_20px_rgba(220,38,38,0.25)]"
+                        }`}
+                        disabled={isNotSelectable}
+                        tabIndex={isNotSelectable ? -1 : 0}
+                        onClick={() => {
+                          if (isNotSelectable) return;
+                          setFlavorSearch("");
+                          setSelectedBrand(brand);
+                        }}
+                      >
+                        <ProductImage
+                          src={brand.imageUrl}
+                          alt={brand.name}
+                          priority={index < 2}
+                          className={`h-56 w-full bg-black/40 object-contain ${isNotSelectable ? "select-none" : ""}`}
+                        />
+                        <div className="p-3 space-y-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <p className={`font-semibold ${isNotSelectable ? "text-white/60" : ""}`}>{brand.name}</p>
+                            <Badge className={statusBadgeClass}>{PRODUCT_STATUS_LABELS[status]}</Badge>
+                          </div>
+                          <div className="flex items-center justify-between pt-1 border-t border-white/5 text-xs">
+                            <span className="text-neutral-400">Price per pod</span>
+                            <span className="font-black text-red-400 text-sm">{toCurrency(brandPrice)}</span>
+                          </div>
+                        </div>
+                      </motion.button>
+                    );
+                  })
+                )}
               </div>
             </Card>
           ))}
@@ -309,6 +404,8 @@ export function PublicHome() {
                 />
               </div>
               <select
+                id="customer-sort"
+                aria-label="Sort customers by"
                 className="h-10 rounded-xl border border-neutral-700 bg-neutral-900/80 px-3 text-sm text-white"
                 value={sortBy}
                 onChange={(event: React.ChangeEvent<HTMLSelectElement>) => setSortBy(event.target.value as keyof typeof sorters)}
@@ -674,6 +771,7 @@ export function PublicHome() {
           </motion.div>
         )}
       </AnimatePresence>
-    </div>
+      </div>
+    </>
   );
 }

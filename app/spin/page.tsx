@@ -2,6 +2,7 @@
 
 import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import Link from "next/link";
 import { Gift, Loader2, Sparkles, Ticket } from "lucide-react";
 import { getSettings, getSpinTicket, subscribeBrands, subscribeFlavors } from "@/lib/firestore";
 import type { Brand, Flavor, Settings, SpinTicket } from "@/lib/types";
@@ -20,7 +21,7 @@ function SpinPageContent() {
   const [inputCode, setInputCode] = useState(urlCode);
   const [activeCode, setActiveCode] = useState(urlCode);
   const [ticket, setTicket] = useState<SpinTicket | null>(null);
-  const [loadingTicket, setLoadingTicket] = useState(false);
+  const [loadingTicket, setLoadingTicket] = useState(() => Boolean(urlCode.trim()));
   const [ticketError, setTicketError] = useState<string | null>(null);
 
   const [brands, setBrands] = useState<Brand[]>([]);
@@ -41,17 +42,14 @@ function SpinPageContent() {
 
   // Fetch ticket when activeCode changes
   useEffect(() => {
-    if (!activeCode.trim()) {
-      setTicket(null);
-      setTicketError(null);
+    const codeToVerify = activeCode.trim();
+    if (!codeToVerify) {
       return;
     }
 
     let isMounted = true;
-    setLoadingTicket(true);
-    setTicketError(null);
 
-    getSpinTicket(activeCode)
+    getSpinTicket(codeToVerify)
       .then((data) => {
         if (!isMounted) return;
         if (!data) {
@@ -78,10 +76,13 @@ function SpinPageContent() {
 
   const handleVerifyCode = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inputCode.trim()) {
+    const cleanCode = inputCode.trim().toUpperCase();
+    if (!cleanCode) {
       return toast.error("Please enter your spin code.");
     }
-    setActiveCode(inputCode.trim().toUpperCase());
+    setLoadingTicket(true);
+    setTicketError(null);
+    setActiveCode(cleanCode);
   };
 
   return (
@@ -89,16 +90,16 @@ function SpinPageContent() {
       {/* Header */}
       <header className="sticky top-0 z-30 border-b border-white/10 bg-black/80 px-4 py-4 backdrop-blur md:px-8">
         <div className="mx-auto flex w-full max-w-6xl items-center justify-between">
-          <a href="/" className="hover:opacity-80 transition">
+          <Link href="/" className="hover:opacity-80 transition">
             <Logo />
-          </a>
+          </Link>
           <div className="flex items-center gap-3">
             <ThemeToggle />
-            <a href="/">
+            <Link href="/">
               <Button variant="outline" className="text-xs border-neutral-700 hover:bg-neutral-800 text-white">
                 Back to Shop
               </Button>
-            </a>
+            </Link>
           </div>
         </div>
       </header>
