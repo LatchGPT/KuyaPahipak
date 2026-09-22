@@ -4,10 +4,6 @@
   color-scheme: dark;
 }
 
-.light {
-  color-scheme: light;
-}
-
 body {
   background: radial-gradient(circle at top right, #450a0a 0%, #140303 35%, #000 100%);
   color: #fff;
@@ -29,96 +25,6 @@ select {
 select option {
   background: #020617;
   color: #fff;
-}
-
-.light body {
-  background: #fff;
-  color: #000;
-}
-
-.light .logo-title {
-  color: #000;
-  text-shadow: -1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff;
-}
-
-.light .min-h-screen.bg-gradient-to-br {
-  background: #fff !important;
-  color: #000;
-}
-
-.light [class*="text-white"] {
-  color: #000 !important;
-}
-
-.light [class*="border-white"] {
-  border-color: #000 !important;
-}
-
-.light [class*="bg-white"],
-.light [class*="bg-black"],
-.light [class*="bg-slate"] {
-  background-color: #fff !important;
-}
-
-.light input,
-.light select {
-  background-color: #fff !important;
-  color: #000 !important;
-  color-scheme: light;
-}
-
-.light input::placeholder {
-  color: #525252;
-}
-
-.light option {
-  background: #fff;
-  color: #000;
-}
-
-.light button[class*="text-white"] {
-  color: #fff !important;
-}
-
-.light button[aria-label="Toggle theme"] {
-  border-color: #000 !important;
-  background-color: #fff !important;
-  color: #000 !important;
-}
-
-.light [class*="bg-purple"],
-.light [class*="bg-indigo"],
-.light [class*="bg-cyan"] {
-  background-color: #000 !important;
-}
-
-.light [class*="text-purple"],
-.light [class*="text-indigo"],
-.light [class*="text-cyan"],
-.light [class*="text-amber"],
-.light [class*="text-rose"] {
-  color: #000 !important;
-}
-
-.light .recharts-bar-rectangle path,
-.light .recharts-pie-sector path {
-  fill: #000 !important;
-}
-
-.light .recharts-cartesian-grid line,
-.light .recharts-axis-line,
-.light .recharts-tick-line {
-  stroke: #000 !important;
-}
-
-.light .recharts-text tspan {
-  fill: #000 !important;
-}
-
-.light .brand-count-badge {
-  border-color: #000 !important;
-  background-color: #000 !important;
-  color: #fff !important;
 }
 
 * {

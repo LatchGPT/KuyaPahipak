@@ -11,7 +11,7 @@ import { Logo } from "@/components/logo";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { ThemeToggle } from "@/components/theme-toggle";
+
 import { toast } from "sonner";
 
 export default function AdminLoginPage() {
@@ -58,7 +58,6 @@ export default function AdminLoginPage() {
             <ArrowLeft className="h-4 w-4" />
             Back to Shop
           </Link>
-          <ThemeToggle />
         </div>
 
         <div className="flex flex-col items-center text-center pt-2">

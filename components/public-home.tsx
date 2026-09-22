@@ -2,10 +2,10 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { ChevronRight, Gift, Search, ShoppingBag, Sparkles, X } from "lucide-react";
+import { ChevronRight, Gift, Search, ShoppingBag, X } from "lucide-react";
 import { Logo } from "@/components/logo";
 import { Preloader } from "@/components/preloader";
-import { ThemeToggle } from "@/components/theme-toggle";
+
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -256,7 +256,6 @@ export function PublicHome() {
         <div className="mx-auto flex w-full max-w-7xl items-center justify-between">
           <Logo />
           <div className="flex items-center gap-3">
-            <ThemeToggle />
             <a href="/admin/login">
               <Button>Admin Login</Button>
             </a>
@@ -272,16 +271,12 @@ export function PublicHome() {
 
           <div className="relative z-10 flex flex-col md:flex-row md:items-center md:justify-between gap-6">
             <div className="space-y-2 max-w-xl">
-              <div className="inline-flex items-center gap-2 rounded-full border border-red-500/40 bg-red-500/15 px-3 py-1 text-xs font-semibold text-red-300 shadow-[0_0_12px_rgba(220,38,38,0.2)]">
-                <Sparkles className="h-3.5 w-3.5 text-red-400" />
-                <span>Loyalty Reward Roulette Available</span>
-              </div>
               <h1 className="text-3xl sm:text-4xl font-black tracking-tight text-white">
                 Kuya Pahipak Vape Shop
               </h1>
               <p className="text-sm text-neutral-300">
                 Explore our catalog of authentic transparent and non-transparent pods starting at{" "}
-                <span className="font-bold text-red-400">{toCurrency(settings.podPrice)}</span> per pod. Complete 10 pod purchases to receive an exclusive roulette spin link for a free pod reward!
+                <span className="font-bold text-red-400">{toCurrency(settings.podPrice)}</span> per pod.
               </p>
             </div>
 

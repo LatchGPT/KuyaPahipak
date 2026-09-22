@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useMemo, useState } from "react";
 import { onAuthStateChanged, signOut } from "firebase/auth";
@@ -10,10 +10,7 @@ import {
   ArrowLeft,
   Boxes,
   ChevronRight,
-  Copy,
-  Dices,
   Edit2,
-  ExternalLink,
   Filter,
   Layers,
   Menu,
@@ -22,7 +19,7 @@ import {
   Plus,
   RefreshCw,
   Search,
-  SlidersHorizontal,
+
   Sparkles,
   Trash2,
   X,
@@ -33,7 +30,7 @@ import {
   createBrand,
   createCustomer,
   createFlavor,
-  createSpinTicket,
+
   deleteBrand,
   deleteCustomer,
   deleteFlavor,
@@ -48,7 +45,7 @@ import {
   subscribeCustomers,
   subscribeFlavors,
   subscribeSales,
-  subscribeSpinTickets,
+
   updateBrand,
   updateCustomer,
   updateCustomerPurchaseItems,
@@ -68,7 +65,7 @@ import {
   type PurchaseItem,
   type Sale,
   type Settings,
-  type SpinTicket,
+
 } from "@/lib/types";
 import { toCurrency } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -76,12 +73,12 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Logo } from "@/components/logo";
-import { ThemeToggle } from "@/components/theme-toggle";
+
 import { Progress } from "@/components/ui/progress";
 import { toast } from "sonner";
 import { optimizeCloudinaryUrl } from "@/lib/image-loader";
 
-const sections = ["Dashboard", "Products & Inventory", "Customers", "Sales", "Roulette", "Analytics", "Reports", "Settings"] as const;
+const sections = ["Dashboard", "Products & Inventory", "Customers", "Sales", "Analytics", "Reports", "Settings"] as const;
 type Section = (typeof sections)[number];
 const CHART_COLORS = ["#dc2626", "#ef4444", "#ffffff", "#71717a", "#b91c1c", "#fca5a5", "#27272a"];
 const BRAND_PLACEHOLDER = "/placeholder-brand-1.svg";
@@ -168,33 +165,28 @@ export function AdminDashboard() {
   const [purchase, setPurchase] = useState({ customerId: "", brandId: "", flavorId: "", quantity: 1 });
   const [redeem, setRedeem] = useState({ customerId: "", brandId: "", flavorId: "" });
 
-  // Roulette (Spin Tickets & Odds) States
-  const [spinTickets, setSpinTickets] = useState<SpinTicket[]>([]);
-  const [selectedSpinCustomerId, setSelectedSpinCustomerId] = useState("");
-  const [generatingSpinTicket, setGeneratingSpinTicket] = useState(false);
-  const [newlyCreatedTicket, setNewlyCreatedTicket] = useState<SpinTicket | null>(null);
-  const [savingOdds, setSavingOdds] = useState(false);
+
 
   useEffect(() => {
     const unsubAuth = auth
       ? onAuthStateChanged(auth, async (user) => {
-          if (!user || !(await isAdmin(user.email))) {
-            router.replace("/admin/login");
-            return;
-          }
-          setReady(true);
-        })
+        if (!user || !(await isAdmin(user.email))) {
+          router.replace("/admin/login");
+          return;
+        }
+        setReady(true);
+      })
       : (() => {
-          setReady(true);
-          return () => undefined;
-        })();
+        setReady(true);
+        return () => undefined;
+      })();
     const unsubscribers = [
       subscribeBrands(setBrands),
       subscribeFlavors(setFlavors),
       subscribeCustomers(setCustomers),
       subscribeSales(setSales),
       subscribeClaims(setClaims),
-      subscribeSpinTickets(setSpinTickets),
+
     ];
 
     getSettings().then(setSettings).catch(() => undefined);
@@ -429,7 +421,6 @@ export function AdminDashboard() {
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <ThemeToggle />
               <Button variant="outline" onClick={() => (auth ? signOut(auth) : router.push("/"))}>
                 Logout
               </Button>
@@ -565,11 +556,10 @@ export function AdminDashboard() {
                         {brands.filter((b) => b.category === "transparent").length} transparent · {brands.filter((b) => b.category === "non-transparent").length} non-trans
                       </p>
                     </div>
-                    <div className={`rounded-xl border p-4 backdrop-blur ${
-                      catalogSummary.lowStockTotal > 0
-                        ? "border-amber-500/30 bg-amber-950/20 text-amber-200"
-                        : "border-white/10 bg-slate-900/40 text-white"
-                    }`}>
+                    <div className={`rounded-xl border p-4 backdrop-blur ${catalogSummary.lowStockTotal > 0
+                      ? "border-amber-500/30 bg-amber-950/20 text-amber-200"
+                      : "border-white/10 bg-slate-900/40 text-white"
+                      }`}>
                       <div className="flex items-center justify-between">
                         <p className="text-xs text-white/60">Low Stock Flavors</p>
                         <AlertTriangle className={`h-4 w-4 ${catalogSummary.lowStockTotal > 0 ? "text-amber-400" : "text-white/40"}`} />
@@ -577,11 +567,10 @@ export function AdminDashboard() {
                       <p className="mt-2 text-2xl font-bold text-amber-300">{catalogSummary.lowStockTotal}</p>
                       <p className="text-[11px] text-white/40">Threshold &le; {settings.lowStockDefault} units</p>
                     </div>
-                    <div className={`rounded-xl border p-4 backdrop-blur ${
-                      catalogSummary.outOfStockTotal > 0
-                        ? "border-rose-500/30 bg-rose-950/20 text-rose-200"
-                        : "border-white/10 bg-slate-900/40 text-white"
-                    }`}>
+                    <div className={`rounded-xl border p-4 backdrop-blur ${catalogSummary.outOfStockTotal > 0
+                      ? "border-rose-500/30 bg-rose-950/20 text-rose-200"
+                      : "border-white/10 bg-slate-900/40 text-white"
+                      }`}>
                       <div className="flex items-center justify-between">
                         <p className="text-xs text-white/60">Out of Stock</p>
                         <XCircle className={`h-4 w-4 ${catalogSummary.outOfStockTotal > 0 ? "text-rose-400" : "text-white/40"}`} />
@@ -662,7 +651,11 @@ export function AdminDashboard() {
                         <motion.div
                           key={brand.id}
                           whileHover={{ y: -4 }}
-                          className="group relative flex flex-col justify-between overflow-hidden rounded-2xl border border-white/10 bg-slate-900/50 p-4 shadow-lg backdrop-blur transition hover:border-red-500/40 hover:bg-slate-900/80"
+                          onClick={() => {
+                            setSelectedBrandId(brand.id);
+                            setFlavorSearch("");
+                          }}
+                          className="group relative flex cursor-pointer flex-col justify-between overflow-hidden rounded-2xl border border-white/10 bg-slate-900/50 p-4 shadow-lg backdrop-blur transition hover:border-red-500/40 hover:bg-slate-900/80"
                         >
                           <div>
                             {/* Card Top Badges */}
@@ -777,12 +770,12 @@ export function AdminDashboard() {
                         </Button>
                         <Button
                           onClick={() => {
-                            activeBrandFlavors.forEach((f) => updateFlavor(f.id, { stock: f.stock + 5 }));
-                            toast.success(`Added +5 stock to all ${activeBrand.name} flavors`);
+                            activeBrandFlavors.forEach((f) => updateFlavor(f.id, { stock: f.stock + 1 }));
+                            toast.success(`Added +1 stock to all ${activeBrand.name} flavors`);
                           }}
                           className="flex items-center gap-2 bg-emerald-700 hover:bg-emerald-600 text-white shadow-md shadow-emerald-950/50"
                         >
-                          <RefreshCw className="h-4 w-4" /> Restock All Flavors (+5)
+                          <RefreshCw className="h-4 w-4" /> Restock All Flavors (+1)
                         </Button>
                       </div>
                     </div>
@@ -1032,13 +1025,12 @@ export function AdminDashboard() {
                           return (
                             <div
                               key={flavor.id}
-                              className={`flex flex-col justify-between rounded-xl border p-3.5 shadow backdrop-blur transition hover:border-white/30 ${
-                                isOutOfStock
-                                  ? "border-rose-500/40 bg-rose-950/15"
-                                  : isLowStock
-                                    ? "border-amber-500/40 bg-amber-950/15"
-                                    : "border-white/10 bg-slate-900/60"
-                              }`}
+                              className={`flex flex-col justify-between rounded-xl border p-3.5 shadow backdrop-blur transition hover:border-white/30 ${isOutOfStock
+                                ? "border-rose-500/40 bg-rose-950/15"
+                                : isLowStock
+                                  ? "border-amber-500/40 bg-amber-950/15"
+                                  : "border-white/10 bg-slate-900/60"
+                                }`}
                             >
                               {editingFlavor?.id === flavor.id ? (
                                 /* Flavor Inline Editor */
@@ -1139,13 +1131,12 @@ export function AdminDashboard() {
                                     <div className="mb-2 flex items-center justify-between gap-2">
                                       <h4 className="font-semibold text-white truncate" title={flavor.name}>{flavor.name}</h4>
                                       <span
-                                        className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold ${
-                                          isOutOfStock
-                                            ? "bg-rose-500/80 text-white"
-                                            : isLowStock
-                                              ? "bg-amber-500/80 text-white"
-                                              : "bg-emerald-500/80 text-white"
-                                        }`}
+                                        className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold ${isOutOfStock
+                                          ? "bg-rose-500/80 text-white"
+                                          : isLowStock
+                                            ? "bg-amber-500/80 text-white"
+                                            : "bg-emerald-500/80 text-white"
+                                          }`}
                                       >
                                         {flavor.stock} in stock
                                       </span>
@@ -1719,8 +1710,8 @@ export function AdminDashboard() {
                                   const existing = items.find((item) => item.flavorId === flavor.id);
                                   return existing
                                     ? items.map((item) =>
-                                        item.flavorId === flavor.id ? { ...item, flavorName: flavorDisplayName, quantity: item.quantity + customerItemQuantity } : item,
-                                      )
+                                      item.flavorId === flavor.id ? { ...item, flavorName: flavorDisplayName, quantity: item.quantity + customerItemQuantity } : item,
+                                    )
                                     : [...items, { flavorId: flavor.id, flavorName: flavorDisplayName, quantity: customerItemQuantity }];
                                 });
                                 setCustomerItemFlavorId("");
@@ -1934,384 +1925,6 @@ export function AdminDashboard() {
             </div>
           )}
 
-          {/* ========================================================================= */}
-          {/* ROULETTE & REWARD SPIN MANAGEMENT SECTION */}
-          {/* ========================================================================= */}
-          {active === "Roulette" && (
-            <div className="space-y-6">
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <h2 className="text-2xl font-bold flex items-center gap-2">
-                    <Dices className="h-6 w-6 text-red-500" />
-                    Roulette & Reward Wheel
-                  </h2>
-                  <p className="text-sm text-white/70">
-                    Generate single-use spin links for customers reaching 10 pods and configure dynamic wheel odds.
-                  </p>
-                </div>
-              </div>
-
-              {/* Top Banner: Ticket Generator & Quick Link */}
-              <div className="grid gap-6 lg:grid-cols-2">
-                <Card className="space-y-4 p-5 border-red-500/20 bg-gradient-to-br from-red-950/20 via-slate-900/60 to-slate-900/40">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2 text-red-400 font-semibold text-base">
-                      <Sparkles className="h-5 w-5" />
-                      Issue Spin Voucher Link
-                    </div>
-                    <Button
-                      variant="outline"
-                      className="text-xs h-7 px-2.5 py-0 border-red-400/40 bg-red-500/10 text-red-200 hover:bg-red-500/20"
-                      onClick={async () => {
-                        try {
-                          const testName = `Test Customer (${Math.floor(100 + Math.random() * 900)})`;
-                          await createCustomer({
-                            name: testName,
-                            totalPurchased: 10,
-                            totalRedeemed: 0,
-                          });
-                          toast.success(`Created ${testName} with 10 purchased pods!`);
-                        } catch (err) {
-                          toast.error(err instanceof Error ? err.message : "Failed to add test customer");
-                        }
-                      }}
-                    >
-                      + Add Test Customer (10 Pods)
-                    </Button>
-                  </div>
-                  <p className="text-xs text-white/60">
-                    Select an eligible customer who has reached at least 10 purchased pods (1+ claimable reward) to generate a unique 1-time spin link.
-                  </p>
-
-                  <div className="space-y-3">
-                    <div className="space-y-1">
-                      <label className="text-xs font-medium text-white/80" htmlFor="spin-customer-select">
-                        Customer
-                      </label>
-                      <select
-                        id="spin-customer-select"
-                        aria-label="Customer for spin ticket"
-                        className="h-10 w-full rounded-xl border border-white/10 bg-white/5 px-3 text-sm text-white focus:outline-none"
-                        value={selectedSpinCustomerId}
-                        onChange={(e) => setSelectedSpinCustomerId(e.target.value)}
-                      >
-                        <option value="">Select an eligible customer...</option>
-                        {customers.map((c) => {
-                          const reward = computeRewardState(c.totalPurchased, c.totalRedeemed);
-                          return (
-                            <option key={c.id} value={c.id}>
-                              {c.name} — {c.totalPurchased} pods bought ({reward.claimable} reward{reward.claimable === 1 ? "" : "s"} ready)
-                            </option>
-                          );
-                        })}
-                      </select>
-                    </div>
-
-                    <Button
-                      className="w-full bg-gradient-to-r from-red-600 via-rose-600 to-red-700 hover:from-red-500 hover:to-red-600 text-white font-semibold flex items-center justify-center gap-2 shadow-lg shadow-red-950/50"
-                      disabled={!selectedSpinCustomerId || generatingSpinTicket}
-                      onClick={async () => {
-                        const targetCustomer = customers.find((c) => c.id === selectedSpinCustomerId);
-                        if (!targetCustomer) return;
-                        setGeneratingSpinTicket(true);
-                        try {
-                          const ticket = await createSpinTicket(targetCustomer.id, targetCustomer.name);
-                          setNewlyCreatedTicket(ticket);
-                          toast.success(`Spin voucher generated: ${ticket.code}`);
-                        } catch (err) {
-                          toast.error(err instanceof Error ? err.message : "Failed to generate spin ticket.");
-                        } finally {
-                          setGeneratingSpinTicket(false);
-                        }
-                      }}
-                    >
-                      <Dices className="h-4 w-4" />
-                      {generatingSpinTicket ? "Generating..." : "Generate 1-Time Spin Link"}
-                    </Button>
-
-                    {newlyCreatedTicket && (
-                      <div className="mt-4 rounded-xl border border-red-500/30 bg-red-950/40 p-3 space-y-2">
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs font-semibold text-red-400">Generated Ticket:</span>
-                          <Badge className="font-mono text-xs border-red-400 bg-red-900/40 text-red-200">
-                            {newlyCreatedTicket.code}
-                          </Badge>
-                        </div>
-                        <p className="text-xs text-white/70">
-                          Customer: <span className="font-medium text-white">{newlyCreatedTicket.customerName}</span>
-                        </p>
-                        <div className="flex items-center gap-2 pt-1">
-                          <Button
-                            className="flex-1 text-xs gap-1.5 py-1 px-2 h-8"
-                            onClick={() => {
-                              const spinUrl = `${window.location.origin}/spin?code=${newlyCreatedTicket.code}`;
-                              navigator.clipboard.writeText(spinUrl);
-                              toast.success("Spin link copied to clipboard!");
-                            }}
-                          >
-                            <Copy className="h-3.5 w-3.5" /> Copy Link
-                          </Button>
-                          <Button
-                            variant="outline"
-                            className="text-xs gap-1.5 py-1 px-2 h-8"
-                            onClick={() => {
-                              window.open(`/spin?code=${newlyCreatedTicket.code}`, "_blank");
-                            }}
-                          >
-                            <ExternalLink className="h-3.5 w-3.5" /> Open
-                          </Button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </Card>
-
-                {/* Probability & Chances Settings */}
-                <Card className="space-y-4 p-5 border-white/10 bg-slate-900/50">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2 text-red-400 font-semibold text-base">
-                      <SlidersHorizontal className="h-5 w-5" />
-                      Wheel Probability Odds
-                    </div>
-                    <Button
-                      disabled={savingOdds}
-                      onClick={async () => {
-                        setSavingOdds(true);
-                        try {
-                          await saveSettings(settings);
-                          toast.success("Probability weights saved!");
-                        } catch {
-                          toast.error("Failed to save wheel odds.");
-                        } finally {
-                          setSavingOdds(false);
-                        }
-                      }}
-                      className="text-xs bg-red-600 hover:bg-red-500 text-white h-8 px-3 py-1"
-                    >
-                      {savingOdds ? "Saving..." : "Save Odds"}
-                    </Button>
-                  </div>
-                  <p className="text-xs text-white/60">
-                    Adjust the relative weight chances for the Stage 1 Category Spin and Stage 2 Brand Spin. Higher weight means higher probability.
-                  </p>
-
-                  <div className="space-y-4">
-                    <div className="rounded-xl border border-white/10 bg-white/5 p-3 space-y-2">
-                      <p className="text-xs font-semibold text-red-400">Stage 1: Category Odds</p>
-                      <div className="grid grid-cols-2 gap-3">
-                        <div>
-                          <label className="text-[11px] text-white/70 block mb-1">Non-Transparent Weight</label>
-                          <Input
-                            type="number"
-                            min={1}
-                            value={settings.nonTransparentWeight ?? 50}
-                            onChange={(e) =>
-                              setSettings((s) => ({
-                                ...s,
-                                nonTransparentWeight: Math.max(1, Number(e.target.value) || 1),
-                              }))
-                            }
-                            className="h-8 text-xs font-mono"
-                          />
-                        </div>
-                        <div>
-                          <label className="text-[11px] text-white/70 block mb-1">Transparent Weight</label>
-                          <Input
-                            type="number"
-                            min={1}
-                            value={settings.transparentWeight ?? 50}
-                            onChange={(e) =>
-                              setSettings((s) => ({
-                                ...s,
-                                transparentWeight: Math.max(1, Number(e.target.value) || 1),
-                              }))
-                            }
-                            className="h-8 text-xs font-mono"
-                          />
-                        </div>
-                      </div>
-                      <div className="text-[11px] text-white/50 pt-1">
-                        Chance ratio:{" "}
-                        <span className="text-white font-semibold">
-                          {(
-                            ((settings.nonTransparentWeight ?? 50) /
-                              ((settings.nonTransparentWeight ?? 50) + (settings.transparentWeight ?? 50))) *
-                            100
-                          ).toFixed(1)}
-                          %
-                        </span>{" "}
-                        Non-Transparent vs{" "}
-                        <span className="text-red-400 font-semibold">
-                          {(
-                            ((settings.transparentWeight ?? 50) /
-                              ((settings.nonTransparentWeight ?? 50) + (settings.transparentWeight ?? 50))) *
-                            100
-                          ).toFixed(1)}
-                          %
-                        </span>{" "}
-                        Transparent
-                      </div>
-                    </div>
-
-                    <div className="rounded-xl border border-white/10 bg-white/5 p-3 space-y-2">
-                      <div className="flex items-center justify-between">
-                        <p className="text-xs font-semibold text-red-400">Stage 2: Brand Odds (Relative Weights)</p>
-                        <span className="text-[10px] text-red-200/70 font-mono">Live Win Chance</span>
-                      </div>
-                      <div className="max-h-52 overflow-y-auto space-y-2 pr-1">
-                        {(() => {
-                          const eligibleBrands = brands.filter(
-                            (brand) =>
-                              (brand.status ?? "available") === "available" &&
-                              !/\b(battery|batteries|device|devices|mod|mods|kit|kits)\b/i.test(brand.name)
-                          );
-                          const totalBrandWeight = eligibleBrands.reduce(
-                            (sum, b) => sum + (settings.brandWeights?.[b.id] ?? 100),
-                            0
-                          );
-
-                          return eligibleBrands.map((brand) => {
-                            const currentWeight = settings.brandWeights?.[brand.id] ?? 100;
-                            const percent = totalBrandWeight > 0 ? ((currentWeight / totalBrandWeight) * 100).toFixed(1) : "0.0";
-                            return (
-                              <div key={brand.id} className="flex items-center justify-between gap-3 text-xs p-1.5 rounded-lg bg-black/20 border border-white/5">
-                                <div className="truncate max-w-[150px]">
-                                  <span className="text-white font-medium block truncate">{brand.name}</span>
-                                  <span className="text-[10px] text-red-400 font-mono font-semibold">{percent}% win chance</span>
-                                </div>
-                                <div className="flex items-center gap-1.5">
-                                  <span className="text-[10px] text-white/50">Weight:</span>
-                                  <Input
-                                    type="number"
-                                    min={1}
-                                    value={currentWeight}
-                                    onChange={(e) => {
-                                      const val = Math.max(1, Number(e.target.value) || 1);
-                                      setSettings((prev) => ({
-                                        ...prev,
-                                        brandWeights: {
-                                          ...(prev.brandWeights || {}),
-                                          [brand.id]: val,
-                                        },
-                                      }));
-                                    }}
-                                    className="h-7 w-16 text-xs text-center font-mono"
-                                  />
-                                </div>
-                              </div>
-                            );
-                          });
-                        })()}
-                      </div>
-                    </div>
-                  </div>
-                </Card>
-              </div>
-
-              {/* Tickets Audit & Live Log Table */}
-              <Card className="p-5">
-                <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between mb-4">
-                  <div>
-                    <h3 className="text-lg font-bold text-white">Issued Reward Spin Tickets</h3>
-                    <p className="text-xs text-white/60">Complete audit log of all generated roulette vouchers and claimed pod flavors.</p>
-                  </div>
-                </div>
-
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-sm">
-                    <thead>
-                      <tr className="border-b border-white/10 text-xs uppercase text-white/50">
-                        <th className="py-2.5 px-3">Ticket Code</th>
-                        <th className="py-2.5 px-3">Customer</th>
-                        <th className="py-2.5 px-3">Status</th>
-                        <th className="py-2.5 px-3">Prize Claimed</th>
-                        <th className="py-2.5 px-3">Issued Date</th>
-                        <th className="py-2.5 px-3 text-right">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-white/5">
-                      {spinTickets.map((ticket) => (
-                        <tr key={ticket.id} className="hover:bg-white/[0.02]">
-                          <td className="py-3 px-3 font-mono font-medium text-red-400">
-                            {ticket.code}
-                          </td>
-                          <td className="py-3 px-3 text-white font-medium">
-                            {ticket.customerName}
-                          </td>
-                          <td className="py-3 px-3">
-                            <Badge
-                              className={
-                                ticket.status === "claimed"
-                                  ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
-                                  : ticket.status === "expired"
-                                  ? "border-rose-500/40 bg-rose-500/10 text-rose-300"
-                                  : "border-amber-500/40 bg-amber-500/10 text-amber-300"
-                              }
-                            >
-                              {ticket.status.toUpperCase()}
-                            </Badge>
-                          </td>
-                          <td className="py-3 px-3 text-xs text-white/80">
-                            {ticket.status === "claimed" ? (
-                              <div>
-                                <span className="font-semibold text-white">{ticket.brandWonName}</span>
-                                <span className="text-red-400"> · {ticket.flavorWonName}</span>
-                                <p className="text-[10px] text-white/40">{ticket.categoryWon}</p>
-                              </div>
-                            ) : (
-                              <span className="text-white/40 italic">Not yet spun</span>
-                            )}
-                          </td>
-                          <td className="py-3 px-3 text-xs text-white/60">
-                            {new Date(ticket.createdAt).toLocaleDateString("en-US", {
-                              month: "short",
-                              day: "numeric",
-                              hour: "2-digit",
-                              minute: "2-digit",
-                            })}
-                          </td>
-                          <td className="py-3 px-3 text-right">
-                            <div className="flex items-center justify-end gap-1.5">
-                              {ticket.status === "pending" && (
-                                <Button
-                                  variant="ghost"
-                                  className="h-8 px-2 py-1 text-xs gap-1 text-red-400 hover:text-white"
-                                  onClick={() => {
-                                    const spinUrl = `${window.location.origin}/spin?code=${ticket.code}`;
-                                    navigator.clipboard.writeText(spinUrl);
-                                    toast.success(`Copied link for ${ticket.code}`);
-                                  }}
-                                >
-                                  <Copy className="h-3.5 w-3.5" />
-                                  Copy Link
-                                </Button>
-                              )}
-                              <Button
-                                variant="ghost"
-                                className="h-8 px-2 py-1 text-xs gap-1 text-white/60 hover:text-white"
-                                onClick={() => {
-                                  window.open(`/spin?code=${ticket.code}`, "_blank");
-                                }}
-                              >
-                                <ExternalLink className="h-3.5 w-3.5" />
-                              </Button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                      {!spinTickets.length && (
-                        <tr>
-                          <td colSpan={6} className="py-8 text-center text-sm text-white/50">
-                            No spin tickets issued yet. Select an eligible customer above to generate one!
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </Card>
-            </div>
-          )}
 
           {/* ========================================================================= */}
           {/* ANALYTICS SECTION */}
